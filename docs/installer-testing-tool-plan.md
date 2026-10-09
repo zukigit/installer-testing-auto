@@ -49,7 +49,7 @@ installer-testing-auto/
 │   ├── checks/                   # check runners (file-exists, file-absent, command)
 │   ├── runner/                   # orchestration: config -> env -> tasks -> checks
 │   └── report/                   # console + (later) JUnit/TAP output
-└── docs/PLAN.md
+└── docs/installer-testing-tool-plan.md
 ```
 
 ### Build-artifact hygiene (confirmed)
@@ -106,6 +106,8 @@ Built-in tasks (initial release):
 Later (out of scope now): `upgrade`, `downgrade`, `repair`, `install-twice`.
 
 ## 6. Config file format (one file = one environment)
+
+Every field under `install_checks` / `uninstall_checks` — `must_exist`, `must_not_exist`, `commands` — is **optional**: omit any of them (or the whole check block) if there is nothing to verify for that phase.
 
 ```yaml
 # configs/ubuntu-24.04.yaml
@@ -169,14 +171,18 @@ installers:
 | Extension | Install command default | Uninstall command default |
 |-----------|-------------------------|---------------------------|
 | `.deb`    | `dpkg -i {installer}`   | `dpkg -r {package}`       |
-| `.rpm`    | `rpm -Uvh {installer}`  | `rpm -e {package}`        |
+| `.rpm`    | `rpm -ivh {installer}`  | `rpm -e {package}`        |
 | `.sh`     | `sh {installer}`        | — (must be set in config) |
 
 ## 7. Core flow
 
 ```mermaid
 flowchart TD
-    A[CLI: installer-test run --config configs/ubuntu.yaml] --> B[Load & validate YAML]
+    A[CLI: installer-test run] --> A1{--config given?}
+    A1 -->|no, default| A2[Discover all configs/*.yaml]
+    A1 -->|yes| A3[Use given config glob]
+    A2 --> B[Load & validate YAML]
+    A3 --> B
     B --> C[Glob-resolve installers in bin/ = package list]
     C --> D[Create ONE container for all installers]
     D --> E[install phase]
@@ -193,12 +199,19 @@ flowchart TD
 
 ## 8. CLI usage
 
+Both `--config` and `--task` are **optional**:
+
+- `--config` omitted → discover **all** `configs/*.yaml` (all available environments).
+- `--task` omitted → run **all available tasks** (`fresh-install` + `uninstall`).
+
 ```
-installer-test run --config configs/ubuntu-24.04.yaml                 # install + uninstall (default set)
-installer-test run --config "configs/*.yaml"                           # all environments
-installer-test run --config configs/rocky-9.yaml --task fresh-install # install phase only
-installer-test run --config configs/ubuntu-24.04.yaml --keep           # keep container for debugging
-installer-test list --config "configs/*.yaml"                          # dry-run: show envs, matched installers, resolved commands
+installer-test run                                                   # all tasks on all envs (no flags needed)
+installer-test run --task fresh-install                             # install phase only, all envs
+installer-test run --config configs/ubuntu-24.04.yaml                # all tasks, one env
+installer-test run --config "configs/*.yaml"                        # all tasks, all envs (same as default)
+installer-test run --config configs/rocky-9.yaml --task fresh-install # install only, one env
+installer-test run --config configs/ubuntu-24.04.yaml --keep         # keep container for debugging
+installer-test list --config "configs/*.yaml"                       # dry-run: show envs, matched installers, resolved commands
 ```
 
 - Exit code `0` = all checks passed, non-zero otherwise (CI friendly).
@@ -225,3 +238,6 @@ installer-test list --config "configs/*.yaml"                          # dry-run
 | 3 | Uninstall dependency | Uninstall **always installs first** — install + uninstall are one set |
 | 4 | Container granularity | **One container per environment for all installers** |
 | 5 | Binary handling | Binary is a build artifact only — **build, test, then remove it**; never committed |
+| 6 | Check optionality | `must_exist`, `must_not_exist`, `commands` are all **optional** in both check blocks |
+| 7 | RPM install default | `rpm -ivh {installer}` (was `rpm -Uvh`) |
+| 8 | CLI defaults | `--config` and `--task` are **optional** — no config → all `configs/*.yaml`; no task → all available tasks |
