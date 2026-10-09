@@ -1,10 +1,10 @@
 {
   "name": "rhel9-dev",
   "image": "docker.io/zukidocker/dev:rhel9",
-  "remoteUser": "root",
+  "remoteUser": "zuki",
 
   "mounts": [
-    "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,readonly",
-    "source=${localEnv:HOME}/.gitconfig,target=/root/.gitconfig,type=bind"
+    "source=${localEnv:HOME}/.ssh,target=/home/zuki/.ssh,type=bind,readonly",
+    "source=${localEnv:HOME}/.gitconfig,target=/home/zuki/.gitconfig,type=bind",
   ]
 }
