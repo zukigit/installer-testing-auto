@@ -1,0 +1,6 @@
+# User-provided installer files are never committed
+bin/*
+!bin/.gitkeep
+
+# Build artifacts (binary is built, tested, then removed — never committed)
+dist/
