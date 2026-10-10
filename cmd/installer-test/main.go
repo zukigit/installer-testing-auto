@@ -2,19 +2,22 @@
 //
 // Usage:
 //
-//	insttester run [--config GLOB] [--task LIST] [--keep]
-//	insttester list [--config GLOB]
+//	insttester run    [--config GLOB] [--task LIST] [--installer GLOB] [--parallel N] [--keep]
+//	insttester list   [--config GLOB]
+//	insttester report --from FILE|-
 package main
 
 import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 
+	"github.com/zukigit/installer-testing-auto/internal/report"
 	"github.com/zukigit/installer-testing-auto/internal/runner"
 	"github.com/zukigit/installer-testing-auto/internal/task"
 )
@@ -22,26 +25,37 @@ import (
 const usage = `installer-test — test installer files on target environments
 
 Usage:
-  installer-test run  [--config GLOB] [--task LIST] [--keep]
-  installer-test list [--config GLOB]
+  installer-test run    [--config GLOB] [--task LIST] [--installer GLOB] [--parallel N] [--keep]
+  installer-test list   [--config GLOB]
+  installer-test report --from FILE|-
 
 Subcommands:
-  run    test the installer files (default: install + uninstall on all envs)
-  list   dry-run: show environments, matched installers and resolved commands
+  run     test installer files: every (installer file x task) pair is an independent
+          case with its own container; cases run in parallel through a global pool
+          (--parallel, default 5) that caps the total containers running at once.
+          Output is live JSON log lines (NDJSON); no summary is printed.
+          Tasks are independent: uninstall is standalone — it installs first
+          (setup) inside its own container, then uninstalls and verifies.
+  list    dry-run: show environments, matched installers and resolved commands
+  report  render a text report from captured run logs (NDJSON)
 
-Flags:
-  --config GLOB   config glob; default: configs/*.yaml (all environments)
-  --task LIST     comma-separated task names; default: all tasks
-                  available tasks: fresh-install, uninstall
-                  (uninstall always runs fresh-install first)
-  --keep          keep the environment alive for debugging (run only)
+Flags (run):
+  --config GLOB      config glob; default: configs/*.yaml (all environments)
+  --task LIST        comma-separated tasks; default: all tasks
+                     available tasks: fresh-install, uninstall (standalone)
+  --installer GLOB   filter the package list, e.g. "bin/my-app-*.rpm"
+  --parallel N       max containers running at the same time (default 5, min 1)
+  --keep             keep containers of failed cases for debugging
+                     (container IDs are always logged)
+
+Flags (report):
+  --from FILE|-      NDJSON log file, or stdin with "-"
 
 Examples:
-  installer-test run
-  installer-test run --task fresh-install
-  installer-test run --config configs/rocky-9.yaml
-  installer-test run --config "configs/*.yaml" --keep
-  installer-test list
+  installer-test run | tee run.jsonl
+  installer-test run --task fresh-install --parallel 8 | tee run.jsonl
+  installer-test run --config configs/rocky-9.yaml --installer "bin/*.rpm"
+  installer-test report --from run.jsonl
 `
 
 func main() {
@@ -58,6 +72,8 @@ func realMain() int {
 		return cmdRun(os.Args[2:])
 	case "list":
 		return cmdList(os.Args[2:])
+	case "report":
+		return cmdReport(os.Args[2:])
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return 0
@@ -71,12 +87,18 @@ func cmdRun(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	configPattern := fs.String("config", "", "config glob (default: configs/*.yaml)")
 	taskList := fs.String("task", "", "comma-separated tasks (default: all)")
-	keep := fs.Bool("keep", false, "keep the environment alive for debugging")
+	installer := fs.String("installer", "", "glob filter for the package list")
+	parallel := fs.Int("parallel", runner.DefaultParallel, "max containers running at the same time")
+	keep := fs.Bool("keep", false, "keep containers of failed cases for debugging")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "unexpected argument(s): %s\n", strings.Join(fs.Args(), " "))
+		return 2
+	}
+	if *parallel < 1 {
+		fmt.Fprintln(os.Stderr, "--parallel must be at least 1")
 		return 2
 	}
 	tasks, err := parseTasks(*taskList)
@@ -89,6 +111,8 @@ func cmdRun(args []string) int {
 	return runner.Run(ctx, runner.Options{
 		ConfigPattern: *configPattern,
 		Tasks:         tasks,
+		Installer:     *installer,
+		Parallel:      *parallel,
 		Keep:          *keep,
 	})
 }
@@ -107,6 +131,35 @@ func cmdList(args []string) int {
 		fmt.Fprintf(os.Stderr, "ERROR   %v\n", err)
 		return 1
 	}
+	return 0
+}
+
+func cmdReport(args []string) int {
+	fs := flag.NewFlagSet("report", flag.ContinueOnError)
+	from := fs.String("from", "-", "NDJSON log file, or \"-\" for stdin")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "unexpected argument(s): %s\n", strings.Join(fs.Args(), " "))
+		return 2
+	}
+	var in io.Reader = os.Stdin
+	if *from != "-" {
+		f, err := os.Open(*from)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR   %v\n", err)
+			return 2
+		}
+		defer f.Close()
+		in = f
+	}
+	run, err := report.Parse(in)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR   parse logs: %v\n", err)
+		return 2
+	}
+	run.RenderText(os.Stdout)
 	return 0
 }
 

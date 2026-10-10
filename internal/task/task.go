@@ -1,13 +1,15 @@
 // Package task defines the Task abstraction. A task is one testing phase
-// (e.g. fresh-install, uninstall) executed against an environment.
+// (e.g. fresh-install, uninstall) executed against an environment. Tasks are
+// independent: each (installer file, task) pair is a case with its own
+// container, and uninstall is valid standalone.
 package task
 
 import (
 	"context"
 
-	"github.com/zukigit/installer-testing-auto/internal/checks"
 	"github.com/zukigit/installer-testing-auto/internal/config"
 	"github.com/zukigit/installer-testing-auto/internal/env"
+	"github.com/zukigit/installer-testing-auto/internal/logging"
 )
 
 const (
@@ -17,50 +19,19 @@ const (
 	UninstallName = "uninstall"
 )
 
-// Result aggregates the check results of one task run.
+// Result holds the check/step totals of one task run. The case passes when
+// Failed == 0.
 type Result struct {
-	Task   string
-	Checks []checks.Result
+	Passed int
+	Failed int
 }
 
-// Failed reports whether any check failed.
-func (r Result) Failed() bool {
-	for _, c := range r.Checks {
-		if !c.Pass {
-			return true
-		}
-	}
-	return false
-}
-
-// Failures returns only the failed check results.
-func (r Result) Failures() []checks.Result {
-	var out []checks.Result
-	for _, c := range r.Checks {
-		if !c.Pass {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-// Counts returns the number of passed and failed checks.
-func (r Result) Counts() (passed, failed int) {
-	for _, c := range r.Checks {
-		if c.Pass {
-			passed++
-		} else {
-			failed++
-		}
-	}
-	return passed, failed
-}
-
-// Task is one testing phase executed against an environment. Uninstall is
-// never run standalone: the runner always executes fresh-install first.
+// Task is one testing phase executed against one installer in its own
+// environment container. Tasks emit their steps and check results as NDJSON
+// events through the CaseLogger and return the aggregated counts.
 type Task interface {
 	Name() string
-	Run(ctx context.Context, e env.Environment, b *config.Bundle) Result
+	Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, cl *logging.CaseLogger) Result
 }
 
 var registry = map[string]Task{}

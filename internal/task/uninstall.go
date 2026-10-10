@@ -4,40 +4,41 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zukigit/installer-testing-auto/internal/checks"
 	"github.com/zukigit/installer-testing-auto/internal/config"
 	"github.com/zukigit/installer-testing-auto/internal/env"
+	"github.com/zukigit/installer-testing-auto/internal/logging"
 )
 
-// Uninstall runs the uninstall command per installer and executes the
-// uninstall checks. It is never executed standalone: the runner always runs
-// fresh-install first, in the same environment.
+// Uninstall is a standalone task: in its own container it installs the
+// package (setup — must succeed, no checks), runs the uninstall command and
+// executes the uninstall checks.
 type Uninstall struct{}
 
 func init() { register(Uninstall{}) }
 
 func (Uninstall) Name() string { return UninstallName }
 
-func (t Uninstall) Run(ctx context.Context, e env.Environment, b *config.Bundle) Result {
-	res := Result{Task: t.Name()}
-	for _, ri := range b.Installers {
-		res.Checks = append(res.Checks, t.runInstaller(ctx, e, res.Task, ri)...)
+func (t Uninstall) Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, cl *logging.CaseLogger) Result {
+	// setup: copy + install (unchecked — install_checks belong to fresh-install)
+	if !copyInstaller(ctx, e, cl, ri) {
+		return Result{Failed: 1}
 	}
-	return res
-}
+	if ri.InstallCmd == "" {
+		cl.Step("setup-install", "", -1, false,
+			fmt.Sprintf("no install command for %s: set install_command in the config", ri.Basename))
+		return Result{Failed: 1}
+	}
+	setupCmd := ri.Expand(ri.InstallCmd)
+	stdout, stderr, code, err := e.Exec(ctx, []string{"/bin/sh", "-c", setupCmd})
+	cl.Step("setup-install", setupCmd, code, err == nil && code == 0, combineOut(stdout, stderr))
+	if err != nil || code != 0 {
+		return Result{Failed: 1} // cannot uninstall what is not installed
+	}
 
-func (Uninstall) runInstaller(ctx context.Context, e env.Environment, zone string, ri *config.ResolvedInstaller) []checks.Result {
 	if ri.UninstallCmd == "" {
-		return []checks.Result{{
-			Zone: zone, Installer: ri.Basename, Kind: "uninstall",
-			Name:   "uninstall " + ri.Basename,
-			Pass:   false,
-			Detail: fmt.Sprintf("no uninstall command for %s: set uninstall_command in the config", ri.Basename),
-		}}
+		cl.Step("uninstall", "", -1, false,
+			fmt.Sprintf("no uninstall command for %s: set uninstall_command in the config", ri.Basename))
+		return Result{Failed: 1}
 	}
-	r := runCommand(ctx, e, zone, ri, ri.UninstallCmd, "uninstall")
-	if !r.Pass {
-		return []checks.Result{r} // skip checks when the uninstall itself failed
-	}
-	return append([]checks.Result{r}, checks.Run(ctx, e, zone, ri, ri.UninstallChecks)...)
+	return runPhase(ctx, e, cl, ri, ri.UninstallCmd, "uninstall", ri.UninstallChecks)
 }

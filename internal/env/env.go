@@ -27,8 +27,20 @@ type Environment interface {
 	Stop(ctx context.Context) error
 }
 
+// Options describes one unstarted environment.
+type Options struct {
+	// Name is the environment name (config-provided or config file basename).
+	Name string
+	// Image is the docker image (docker environments).
+	Image string
+	// Workdir is the in-environment directory installers are copied to.
+	Workdir string
+	// ContainerName is the deterministic container name (docker environments).
+	ContainerName string
+}
+
 // Factory builds an unstarted Environment for a registered type.
-type Factory func(name, image, workdir string) (Environment, error)
+type Factory func(opts Options) (Environment, error)
 
 var factories = map[string]Factory{}
 
@@ -39,12 +51,12 @@ func Register(envType string, f Factory) {
 }
 
 // New builds an unstarted environment of the given type.
-func New(envType, name, image, workdir string) (Environment, error) {
+func New(envType string, opts Options) (Environment, error) {
 	f, ok := factories[envType]
 	if !ok {
 		return nil, fmt.Errorf("unknown environment type %q (supported: %v)", envType, SupportedTypes())
 	}
-	return f(name, image, workdir)
+	return f(opts)
 }
 
 // SupportedTypes lists the registered environment types.

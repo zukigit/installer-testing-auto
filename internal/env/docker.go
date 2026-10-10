@@ -15,27 +15,28 @@ import (
 // testcontainers-go. It is the first implementation of Environment; future
 // implementations (e.g. winrm) follow the same interface.
 type DockerEnvironment struct {
-	name    string
-	image   string
-	workdir string
-	ctr     testcontainers.Container
+	name, image, workdir, containerName string
+	ctr                                 testcontainers.Container
 }
 
 func init() {
-	Register(TypeDocker, func(name, image, workdir string) (Environment, error) {
-		if image == "" {
+	Register(TypeDocker, func(opts Options) (Environment, error) {
+		if opts.Image == "" {
 			return nil, fmt.Errorf("docker environment requires an image")
 		}
-		if workdir == "" {
-			workdir = "/tmp"
+		if opts.Workdir == "" {
+			opts.Workdir = "/tmp"
 		}
-		return &DockerEnvironment{name: name, image: image, workdir: workdir}, nil
+		return &DockerEnvironment{
+			name: opts.Name, image: opts.Image,
+			workdir: opts.Workdir, containerName: opts.ContainerName,
+		}, nil
 	})
 }
 
 // NewDocker is a direct constructor for tests.
 func NewDocker(name, image, workdir string) (*DockerEnvironment, error) {
-	e, err := New(TypeDocker, name, image, workdir)
+	e, err := New(TypeDocker, Options{Name: name, Image: image, Workdir: workdir})
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +62,9 @@ func (e *DockerEnvironment) Start(ctx context.Context) error {
 	req := testcontainers.ContainerRequest{
 		Image: e.image,
 		Cmd:   []string{"sleep", "infinity"},
+	}
+	if e.containerName != "" {
+		req.Name = e.containerName
 	}
 	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: req,

@@ -9,11 +9,18 @@ Automation tool to test installer files on target environments using
 2. Describe each target environment in `configs/<env>.yaml` — one file per environment:
    docker image, installer file patterns (**wildcards allowed**), and optional
    per-installer checks (`must_exist`, `must_not_exist`, shell `commands`).
-3. Run the tool: it spins up **one container per environment**, copies the
-   installer files in, **installs** them, runs the checks, **uninstalls** them
-   (uninstall always runs install first) and runs the uninstall checks.
+3. Run the tool: every **(installer file × task) pair** becomes an independent test
+   case with **its own container**. Cases run in parallel through a **global pool** —
+   `--parallel N` caps the total number of containers running at once (default 5).
+   - `fresh-install` case: copy installer → install → install checks.
+   - `uninstall` case (standalone): copy installer → install (setup, unchecked) →
+     uninstall → uninstall checks.
+4. Output is **live JSON logs** (NDJSON, one event per line) — no summary at the end;
+   the exit code is `0` only when every case passed.
+5. Build a report afterwards from the captured logs with the `report` subcommand.
 
-See `docs/installer-testing-tool-plan.md` for the full design.
+See `docs/installer-testing-tool-plan.md` (v1 baseline) and
+`docs/container-per-task-plan.md` (v2 design) for the full design.
 
 ## Usage
 
@@ -24,20 +31,25 @@ go build -o installer-test ./cmd/installer-test
 # dry-run: show envs, matched installers, resolved commands
 ./installer-test list
 
-# install + uninstall on all environments in configs/*.yaml
-./installer-test run
+# run all tasks on all environments (live JSON logs), max 5 containers at once
+./installer-test run | tee run.jsonl
 
-# install phase only
-./installer-test run --task fresh-install
+# install cases only, 8 containers max
+./installer-test run --task fresh-install --parallel 8 | tee run.jsonl
 
-# one environment, keep the container for debugging
-./installer-test run --config configs/ubuntu-24.04.yaml --keep
+# one environment + installer filter
+./installer-test run --config configs/rocky-9.yaml --installer "bin/*.rpm" | tee run.jsonl
+
+# keep containers of failed cases for debugging (container IDs are always logged)
+./installer-test run --keep | tee run.jsonl
+
+# generate a text report from the captured logs
+./installer-test report --from run.jsonl
+./installer-test report --from - < run.jsonl      # from stdin
 
 # remove the binary when done (build artifact hygiene)
 rm installer-test
 ```
-
-Exit code `0` means all checks passed (CI friendly).
 
 > Running `run` requires a Docker daemon; the devcontainer has none, so use a
 > Docker-enabled host or mount the Docker socket.
