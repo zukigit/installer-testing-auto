@@ -1,0 +1,19 @@
+# One config file = one target environment.
+environment:
+  name: redhat-9
+  type: docker
+  image: docker.io/zukidocker/solar:rhel9
+
+installers:
+  - pattern: "bin/*.rpm"
+
+    # All check fields are optional.
+    # install_checks:
+    #   # must_exist: ["/usr/bin/myapp"]
+    #   # must_not_exist: ["/tmp/legacy.conf"]
+    #   commands:
+    #     - command: "dpkg -s {package}"
+    # uninstall_checks:
+    #   commands:
+    #     - command: "dpkg -s {package}"
+    #       expected_exit_code: 1
