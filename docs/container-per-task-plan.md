@@ -186,3 +186,4 @@ Every line shares the same envelope; `data` carries event-specific fields:
 | 5 | Parallelism | **global, CLI-only** — `--parallel N` (default **5**, min 1); **no config key**; total containers running at once never exceed N, across all environments |
 | 6 | Cross-env concurrency | **one global pool** — all cases from all configs share a single queue; environments are not processed sequentially |
 | 7 | Uninstall setup visibility | logged as a `step` event (`kind: setup-install`), no check row |
+| 8 | Case result counts | every executed step (copy / setup-install / install / uninstall) counts as **one passed (or failed) result**, in addition to checks — so cases without any configured checks still report non-zero counts |
