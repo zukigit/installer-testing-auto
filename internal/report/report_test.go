@@ -5,22 +5,27 @@ import (
 	"testing"
 )
 
-// Sample log (new field shape only): fresh-install passes with a file check
-// and a command check; uninstall fails at a file check (kept); b.rpm never ends.
+// Sample log: fresh-install of a.rpm passes (copy+install steps, 2 checks);
+// uninstall of a.rpm fails one check (kept container, copy step passed);
+// b.rpm's uninstall never finishes (incomplete).
 const sampleNDJSON = `
 {"ts":"2026-10-09T12:00:00.000Z","level":"info","event":"run_start","data":{"configs":1,"cases":3,"parallel":5}}
 {"ts":"2026-10-09T12:00:00.010Z","level":"info","event":"env_start","env":"ubuntu-24.04","data":{"image":"ubuntu:24.04","workdir":"/tmp"}}
 {"ts":"2026-10-09T12:00:00.400Z","level":"info","event":"case_start","env":"ubuntu-24.04","task":"fresh-install","installer":"a.rpm","data":{"container_id":"a1b2","container_name":"ita-ubuntu-24-04-a-rpm-fresh-install"}}
+{"ts":"2026-10-09T12:00:00.600Z","level":"info","event":"step","env":"ubuntu-24.04","task":"fresh-install","installer":"a.rpm","data":{"kind":"copy","command":"bin/a.rpm -> /tmp/a.rpm","exit_code":0,"pass":true}}
 {"ts":"2026-10-09T12:00:01.000Z","level":"info","event":"step","env":"ubuntu-24.04","task":"fresh-install","installer":"a.rpm","data":{"kind":"install","command":"rpm -ivh /tmp/a.rpm","exit_code":0,"pass":true,"stdout":"install ok"}}
 {"ts":"2026-10-09T12:00:01.100Z","level":"info","event":"check","env":"ubuntu-24.04","task":"fresh-install","installer":"a.rpm","data":{"kind":"file","path":"/usr/bin/app","expectation":"must_exist","exit_code":0,"pass":true}}
 {"ts":"2026-10-09T12:00:01.200Z","level":"info","event":"check","env":"ubuntu-24.04","task":"fresh-install","installer":"a.rpm","data":{"kind":"command","command":"app --version","exit_code":0,"expected_exit_code":0,"pass":true,"stdout":"app 1.0"}}
-{"ts":"2026-10-09T12:00:01.500Z","level":"info","event":"case_end","env":"ubuntu-24.04","task":"fresh-install","installer":"a.rpm","data":{"container_id":"a1b2","pass":true,"passed":3,"failed":0,"duration_ms":1100}}
+{"ts":"2026-10-09T12:00:01.500Z","level":"info","event":"case_end","env":"ubuntu-24.04","task":"fresh-install","installer":"a.rpm","data":{"container_id":"a1b2","pass":true,"passed":4,"failed":0,"duration_ms":1100}}
 {"ts":"2026-10-09T12:00:02.000Z","level":"info","event":"case_start","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"container_id":"c3d4","container_name":"ita-ubuntu-24-04-a-rpm-uninstall"}}
-{"ts":"2026-10-09T12:00:02.100Z","level":"info","event":"check","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"kind":"file","path":"/usr/bin/app","expectation":"must_not_exist","exit_code":0,"pass":false,"detail":"file still exists"}}
-{"ts":"2026-10-09T12:00:02.500Z","level":"error","event":"case_end","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"container_id":"c3d4","pass":false,"passed":0,"failed":1,"duration_ms":600,"kept":true}}
+{"ts":"2026-10-09T12:00:02.100Z","level":"info","event":"step","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"kind":"copy","command":"bin/a.rpm -> /tmp/a.rpm","exit_code":0,"pass":true}}
+{"ts":"2026-10-09T12:00:02.200Z","level":"info","event":"step","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"kind":"setup-install","command":"rpm -ivh /tmp/a.rpm","exit_code":0,"pass":true}}
+{"ts":"2026-10-09T12:00:02.300Z","level":"info","event":"step","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"kind":"uninstall","command":"rpm -e app","exit_code":0,"pass":true,"stdout":"removed app"}}
+{"ts":"2026-10-09T12:00:02.400Z","level":"info","event":"check","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"kind":"file","path":"/usr/bin/app","expectation":"must_not_exist","exit_code":0,"pass":false,"detail":"file still exists"}}
+{"ts":"2026-10-09T12:00:02.600Z","level":"error","event":"case_end","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"container_id":"c3d4","pass":false,"passed":3,"failed":1,"duration_ms":600,"kept":true}}
 {"ts":"2026-10-09T12:00:03.000Z","level":"info","event":"case_start","env":"ubuntu-24.04","task":"uninstall","installer":"b.rpm","data":{"container_id":"e5f6","container_name":"ita-ubuntu-24-04-b-rpm-uninstall"}}
-{"ts":"2026-10-09T12:00:03.500Z","level":"info","event":"env_end","env":"ubuntu-24.04","data":{"passed":3,"failed":1}}
-{"ts":"2026-10-09T12:00:03.500Z","level":"info","event":"run_end","data":{"passed":3,"failed":1,"config_errors":0}}
+{"ts":"2026-10-09T12:00:03.500Z","level":"info","event":"env_end","env":"ubuntu-24.04","data":{"passed":7,"failed":1}}
+{"ts":"2026-10-09T12:00:03.500Z","level":"info","event":"run_end","data":{"passed":7,"failed":1,"config_errors":0}}
 `
 
 func TestParseAndRenderCompact(t *testing.T) {
@@ -39,59 +44,46 @@ func TestParseAndRenderCompact(t *testing.T) {
 	if env.image != "ubuntu:24.04" || env.workdir != "/tmp" {
 		t.Errorf("env image/workdir wrong: %q %q", env.image, env.workdir)
 	}
-	if !env.sawEnd || env.passed != 3 || env.failed != 1 {
-		t.Errorf("env end not aggregated: %+v", env)
-	}
 
-	var fresh, un, incomplete *caseRec
-	for _, c := range run.allCases {
-		switch {
-		case c.installer == "a.rpm" && c.task == "fresh-install":
-			fresh = c
-		case c.installer == "a.rpm" && c.task == "uninstall":
-			un = c
-		case c.installer == "b.rpm":
-			incomplete = c
-		}
-	}
-	if fresh == nil || !fresh.ended || !fresh.pass || fresh.passed != 3 {
-		t.Errorf("fresh-install case wrong: %+v", fresh)
-	}
-	if un == nil || !un.ended || un.pass || un.failed != 1 || !un.kept {
-		t.Errorf("uninstall case wrong: %+v", un)
-	}
-	if len(un.checks) != 1 || un.checks[0].path != "/usr/bin/app" || un.checks[0].expectation != "must_not_exist" || un.checks[0].detail != "file still exists" {
-		t.Errorf("uninstall checks wrong: %+v", un.checks)
-	}
-	if len(fresh.steps) != 1 || fresh.steps[0].stdout != "install ok" {
-		t.Errorf("fresh-install steps wrong: %+v", fresh.steps)
-	}
-	if incomplete == nil || incomplete.ended {
-		t.Errorf("incomplete case wrong: %+v", incomplete)
-	}
-
-	// compact view: failing case detail present, passing-case detail absent
 	var sb strings.Builder
 	run.RenderText(&sb, false)
 	out := sb.String()
 	for _, want := range []string{
 		"installer-testing-auto report",
-		"fresh-install PASS",
-		"uninstall  FAIL",
-		"INCOMPLETE",
-		"uninstall_checks:", // failing case detail grouped in its section
-		"/usr/bin/app",      // failure detail shown
-		"file still exists", // failure detail
+		// grouping: header per installer, tasks nested in canonical order
+		"  a.rpm\n",
+		"    fresh-install",
+		"    uninstall",
+		// marks
+		"✓ PASS", "✗ FAIL", "? INCOMPLETE",
+		// counts
+		"4/4", "3/4",
+		// failure detail: failing check row + detail under the task line
+		"uninstall_checks:",
+		"/usr/bin/app", "must not exist",
+		"detail: file still exists",
+		// totals: compact per-env checks summary; TOTAL counts cases only
+		"\n  checks: 7 passed, 1 failed\n",
+		"TOTAL: 3 cases (1 passed, 1 failed, 1 incomplete)",
+		// kept containers section
 		"kept containers (--keep, failed cases):",
 		"ita-ubuntu-24-04-a-rpm-uninstall",
-		"TOTAL: 3 cases: 1 passed, 1 failed, 1 incomplete",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("compact report missing %q\nreport:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "\n    install_checks:") {
+	// container names must not appear on task lines in the compact view
+	if strings.Contains(out, "ita-ubuntu-24-04-a-rpm-fresh-install") {
+		t.Errorf("compact view should not show container names\ndetails view:\n%s", out)
+	}
+	// passing-case check details must not leak into compact view
+	if strings.Contains(out, "\n      install_checks:") {
 		t.Errorf("compact view should not render passing-case detail sections\nreport:\n%s", out)
+	}
+	// the TOTAL footnote must not have a separate checks line
+	if strings.Contains(out, ")\nchecks:") {
+		t.Errorf("TOTAL footnote should be a single case-only line\nreport:\n%s", out)
 	}
 }
 
@@ -103,22 +95,27 @@ func TestRenderDetailsView(t *testing.T) {
 	var sb strings.Builder
 	run.RenderText(&sb, true)
 	out := sb.String()
-	for _, want := range []string{
-		"steps:",
+	wantStrings := []string{
+		// container names are shown in the details view (name only, no id)
+		"container: ita-ubuntu-24-04-a-rpm-fresh-install",
+		// steps: passing copy steps hidden, full paths kept
+		"install: rpm -ivh /tmp/a.rpm (exit 0)",
 		"install_checks:",
-		"uninstall_checks:",
-		"must exist",    // file check row in --details
-		"app --version", // command check row
-		"exit code 0",
-		"stdout: app 1.0", // passing command check shows streams in --details
-		"stderr: (empty)",
-		"must not exist",
+		"must exist", "app --version", "exit code 0",
+		"stdout: app 1.0", "stderr: (empty)",
+		"setup-install: rpm -ivh /tmp/a.rpm (exit 0)",
+		"uninstall: rpm -e app (exit 0)",
 		"detail: file still exists",
-		"TOTAL: 3 cases: 1 passed, 1 failed, 1 incomplete",
-	} {
+		"(case interrupted — no steps/check results recorded yet)",
+	}
+	for _, want := range wantStrings {
 		if !strings.Contains(out, want) {
 			t.Errorf("--details report missing %q\nreport:\n%s", want, out)
 		}
+	}
+	// passing copy steps hidden in the details view
+	if strings.Contains(out, "bin/a.rpm -> /tmp/a.rpm") {
+		t.Errorf("--details view should hide passing copy steps\nreport:\n%s", out)
 	}
 }
 

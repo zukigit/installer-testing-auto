@@ -54,15 +54,14 @@ env redhat-9 (image docker.io/zukidocker/solar:rhel9, workdir /tmp)
     fresh-install   ✓ PASS   2/2   27.6s
     uninstall       ✓ PASS   3/3   27.1s
 
-  env total: 25 checks passed, 0 failed
+  checks: 25 passed, 0 failed
 
 TOTAL: 8 cases (8 passed, 0 failed)
-       25 checks passed, 0 failed
 ```
 
 - Task lines: `task` + mark/status + `passed/total checks` + `duration` — short, never wraps.
 - Failures keep their detail block directly under the failing task line (as today).
-- Container names move **out of the task lines**: shown only for kept containers and in the `--details` view (see 2.4).
+- Container names move **out of the task lines**: shown only for kept containers and in the `--details` view (name only — see 2.3).
 - Blank line between installer groups; groups in first-seen order.
 
 ### 2.3 `--details` view
@@ -74,6 +73,9 @@ Same grouping, plus per-task detail. Changes vs today:
   (confirmed) — and exit code; check sections unchanged
   (`install_checks:` / `uninstall_checks:` with path/expectation/command, exit
   codes, stdout/stderr).
+- The container line shows the **container name only** (confirmed) — no `(id …)`
+  suffix; the id stays available in the logs (`case_start` / `case_end` events):
+  `container: ita-redhat-9-jobarranger-utils-7-2-2-1-el9-x86-64-rpm-fresh-install`
 
 ```text
   jobarranger-agentd-7.2.2-1.el9.x86_64.rpm
@@ -105,11 +107,13 @@ Same grouping, plus per-task detail. Changes vs today:
   terminal** (auto-detected); piped/redirected output (files, `tee`, CI logs)
   stays plain — no color codes in saved reports.
 
-### 2.6 Totals footnote (fixed)
+### 2.6 Totals footnote (fixed, refined)
 
-- `TOTAL:` line counts **cases** and **checks** explicitly, no ambiguous parenthetical:
-  `TOTAL: 8 cases (8 passed, 0 failed)` + second line `checks: 25 passed, 0 failed`.
-- `env total:` lines follow the same convention (`checks: N passed, M failed`).
+- The `env total:` line is **removed**; each environment ends with a compact checks
+  summary instead: `checks: 29 passed, 1 failed`.
+- `TOTAL:` is a **single line counting cases only** — the separate `checks:` line
+  under it is removed (it duplicated the per-env summaries):
+  `TOTAL: 8 cases (7 passed, 1 failed)`.
 
 ## 3. Group header
 
@@ -144,6 +148,9 @@ Same grouping, plus per-task detail. Changes vs today:
 | 3 | Marks & colors | **`✓`/`✗` marks always** + ANSI colors when stdout is a TTY (auto-off when piped/redirected) |
 | 4 | Copy steps in `--details` | **hide passing copies** (failed copies still show) |
 | 5 | "No case_end" status label | **keep `INCOMPLETE`** — neutral, accurate for interruption, live runs and truncated logs |
+| 6 | Per-env summary | `env total:` line removed; replaced by compact `checks: 29 passed, 1 failed` |
+| 7 | TOTAL footnote | **single line, cases only** (`TOTAL: 8 cases (7 passed, 1 failed)`) — separate checks line removed |
+| 8 | Container line in `--details` | **name only** — no `(id …)` suffix; the id stays in the logs |
 
 ### 6.2 The "no case_end" status label — explained and confirmed
 
