@@ -1,0 +1,37 @@
+# One config file = one target environment.
+environment:
+  name: debian-11
+  type: docker
+  image: docker.io/zukidocker/solar:debian11
+
+installers:
+  - pattern: "bin/jobarranger-agentd*debian11*.deb"
+    uninstall_command: "apt-get purge -y {package}"
+    uninstall_checks:
+      must_not_exist: [
+        "/var/log/jobarranger",
+        "/etc/jobarranger/jobarg_agentd.conf",
+        "/var/lib/jobarranger/agent"
+      ]
+    upgrade_command: "echo new >> /etc/jobarranger/jobarg_agentd.conf && rpm -Uvh {installer}"
+    upgrade_checks:
+      must_exist:
+        - /etc/jobarranger/jobarg_agentd.conf.new
+
+  - pattern: "bin/jobarranger-manager*debian11*.deb"
+    install_checks:
+      must_exist: [
+        "/usr/share/jobarranger/modules/Module.php",
+        "/usr/lib/systemd/system/jam-cleanup.service"
+      ]
+    uninstall_checks:
+      must_not_exist: [
+        "/var/log/jobarranger",
+        "/usr/share/jobarranger"
+      ]
+    upgrade_command: "echo new >> /etc/jobarranger/web/jam.config.php && rpm -Uvh {installer}"
+    upgrade_checks:
+      must_exist:
+        - /etc/jobarranger/web/jam.config.php.new
+
+  - pattern: "bin/jobarranger-utils*debian11*.deb"
