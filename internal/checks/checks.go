@@ -21,9 +21,12 @@ func Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, c
 		return 0, 0
 	}
 	for _, path := range cs.MustExist {
-		name := "must_exist: " + path
 		exists, code, output, err := probeFile(ctx, e, path)
-		fields := map[string]any{"exit_code": code}
+		fields := map[string]any{
+			"path":        path,
+			"expectation": expectationMustExist,
+			"exit_code":   code,
+		}
 		switch {
 		case err != nil:
 			fields["detail"] = err.Error()
@@ -31,7 +34,7 @@ func Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, c
 			fields["detail"] = "file does not exist"
 		}
 		pass := err == nil && exists
-		cl.Check("file", name, pass, withOutput(fields, output))
+		cl.Check("file", "", pass, withStdout(fields, output))
 		if pass {
 			passed++
 		} else {
@@ -39,9 +42,12 @@ func Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, c
 		}
 	}
 	for _, path := range cs.MustNotExist {
-		name := "must_not_exist: " + path
 		exists, code, output, err := probeFile(ctx, e, path)
-		fields := map[string]any{"exit_code": code}
+		fields := map[string]any{
+			"path":        path,
+			"expectation": expectationMustNotExist,
+			"exit_code":   code,
+		}
 		switch {
 		case err != nil:
 			fields["detail"] = err.Error()
@@ -49,7 +55,7 @@ func Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, c
 			fields["detail"] = "file still exists"
 		}
 		pass := err == nil && !exists
-		cl.Check("file", name, pass, withOutput(fields, output))
+		cl.Check("file", "", pass, withStdout(fields, output))
 		if pass {
 			passed++
 		} else {
@@ -64,7 +70,13 @@ func Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, c
 			expected = *c.ExpectedExitCode
 		}
 		pass := err == nil && code == expected
-		fields := map[string]any{"exit_code": code, "expected_exit_code": expected}
+		fields := map[string]any{
+			"command":            cmd,
+			"exit_code":          code,
+			"expected_exit_code": expected,
+			"stdout":             stdout,
+			"stderr":             stderr,
+		}
 		switch {
 		case err != nil:
 			fields["detail"] = err.Error()
@@ -79,7 +91,7 @@ func Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, c
 		if c.ExpectedStdoutContains != "" {
 			fields["expected_stdout_contains"] = c.ExpectedStdoutContains
 		}
-		cl.Check("command", c.Command, pass, withOutput(fields, stdout+stderr))
+		cl.Check("command", "", pass, fields)
 		if pass {
 			passed++
 		} else {
@@ -89,9 +101,15 @@ func Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, c
 	return passed, failed
 }
 
-func withOutput(fields map[string]any, output string) map[string]any {
+// Expectation values for file checks (event `expectation` field).
+const (
+	expectationMustExist    = "must_exist"
+	expectationMustNotExist = "must_not_exist"
+)
+
+func withStdout(fields map[string]any, output string) map[string]any {
 	if out := strings.TrimSpace(output); out != "" {
-		fields["output"] = out
+		fields["stdout"] = out
 	}
 	return fields
 }

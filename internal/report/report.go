@@ -76,17 +76,23 @@ func (ev *Event) flag(key string) bool {
 }
 
 type stepRec struct {
-	kind, command string
-	exitCode      int
-	pass          bool
-	output        string
+	kind, command  string
+	exitCode       int
+	pass           bool
+	stdout, stderr string
 }
 
 type checkRec struct {
-	kind, name string
-	pass       bool
-	detail     string
-	output     string
+	kind           string // "file" or "command"
+	path           string // file checks
+	expectation    string // file checks: must_exist / must_not_exist
+	command        string // command checks (placeholders expanded)
+	pass           bool
+	exitCode       int
+	expected       int
+	stdoutContains string
+	detail         string
+	stdout, stderr string
 }
 
 type caseRec struct {
@@ -210,13 +216,24 @@ func (r *Run) apply(ev *Event) {
 		code, _ := ev.num("exit_code")
 		c.steps = append(c.steps, stepRec{
 			kind: ev.str("kind"), command: ev.str("command"),
-			exitCode: code, pass: ev.flag("pass"), output: ev.str("output"),
+			exitCode: code, pass: ev.flag("pass"),
+			stdout: ev.str("stdout"), stderr: ev.str("stderr"),
 		})
 	case "check":
 		c := r.caseCtx(ev)
+		exitCode, _ := ev.num("exit_code")
+		expected, _ := ev.num("expected_exit_code")
 		c.checks = append(c.checks, checkRec{
-			kind: ev.str("kind"), name: ev.str("name"),
-			pass: ev.flag("pass"), detail: ev.str("detail"), output: ev.str("output"),
+			kind:           ev.str("kind"),
+			path:           ev.str("path"),
+			expectation:    ev.str("expectation"),
+			command:        ev.str("command"),
+			pass:           ev.flag("pass"),
+			exitCode:       exitCode,
+			expected:       expected,
+			stdoutContains: ev.str("expected_stdout_contains"),
+			detail:         ev.str("detail"),
+			stdout:         ev.str("stdout"), stderr: ev.str("stderr"),
 		})
 	case "case_end":
 		c := r.caseCtx(ev)

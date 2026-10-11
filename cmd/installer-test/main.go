@@ -50,12 +50,15 @@ Flags (run):
 
 Flags (report):
   --from FILE|-      NDJSON log file, or stdin with "-"
+  --details          show full per-task details (steps + install_checks /
+                     uninstall_checks sections) for every case, pass and fail
 
 Examples:
   installer-test run | tee run.jsonl
   installer-test run --task fresh-install --parallel 8 | tee run.jsonl
   installer-test run --config configs/rocky-9.yaml --installer "bin/*.rpm"
   installer-test report --from run.jsonl
+  installer-test report --details --from run.jsonl
 `
 
 func main() {
@@ -137,6 +140,7 @@ func cmdList(args []string) int {
 func cmdReport(args []string) int {
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)
 	from := fs.String("from", "-", "NDJSON log file, or \"-\" for stdin")
+	details := fs.Bool("details", false, "show full per-task details for every case")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -159,7 +163,7 @@ func cmdReport(args []string) int {
 		fmt.Fprintf(os.Stderr, "ERROR   parse logs: %v\n", err)
 		return 2
 	}
-	run.RenderText(os.Stdout)
+	run.RenderText(os.Stdout, *details)
 	return 0
 }
 

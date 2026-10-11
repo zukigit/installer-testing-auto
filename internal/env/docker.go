@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"path/filepath"
 
+	stdcopy "github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // DockerEnvironment runs the tests inside a container managed by
@@ -93,22 +92,21 @@ func (e *DockerEnvironment) Copy(ctx context.Context, src, dest string) error {
 	return nil
 }
 
-// Exec runs a command inside the container. Note: docker exec merges stdout
-// and stderr, so both returned strings carry the combined output.
+// Exec runs a command inside the container. stdout and stderr are returned
+// separately by decoding docker's multiplexed stream with stdcopy.
 func (e *DockerEnvironment) Exec(ctx context.Context, cmd []string) (stdout, stderr string, exitCode int, err error) {
 	if e.ctr == nil {
 		return "", "", -1, fmt.Errorf("environment %s not started", e.name)
 	}
-	code, reader, err := e.ctr.Exec(ctx, cmd, tcexec.Multiplexed())
+	code, reader, err := e.ctr.Exec(ctx, cmd)
 	if err != nil {
 		return "", "", -1, fmt.Errorf("exec %v: %w", cmd, err)
 	}
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, reader); err != nil {
-		return "", "", code, fmt.Errorf("read exec output: %w", err)
+	var outBuf, errBuf bytes.Buffer
+	if _, err := stdcopy.StdCopy(&outBuf, &errBuf, reader); err != nil {
+		return "", "", code, fmt.Errorf("demultiplex exec output: %w", err)
 	}
-	out := buf.String()
-	return out, out, code, nil
+	return outBuf.String(), errBuf.String(), code, nil
 }
 
 // Stop terminates the container (testcontainers also cleans up the network).

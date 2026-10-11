@@ -127,7 +127,8 @@ func (c *CaseLogger) CaseEnd(containerID string, pass bool, passed, failed int, 
 }
 
 // Step logs one executed phase step: copy / setup-install / install / uninstall.
-func (c *CaseLogger) Step(kind, command string, exitCode int, pass bool, output string) {
+// stdout and stderr are truncated to 2000 chars each.
+func (c *CaseLogger) Step(kind, command string, exitCode int, pass bool, stdout, stderr string) {
 	level := "info"
 	if !pass {
 		level = "error"
@@ -136,22 +137,36 @@ func (c *CaseLogger) Step(kind, command string, exitCode int, pass bool, output 
 	if command != "" {
 		data["command"] = command
 	}
-	if output != "" {
-		data["output"] = truncate(output)
+	if out := truncate(stdout); out != "" {
+		data["stdout"] = out
+	}
+	if out := truncate(stderr); out != "" {
+		data["stderr"] = out
 	}
 	c.e.write(level, "step", c.env, c.task, c.installerID, data)
 }
 
-// Check logs one check result; fields carry kind-specific extras
-// (exit_code, expected_exit_code, expected_stdout_contains, detail, output).
+// Check logs one check result. For file checks fields carry `path` and
+// `expectation` (must_exist / must_not_exist); for command checks `command`,
+// `exit_code`, `expected_exit_code`, `stdout` and `stderr`. The stdout/stderr
+// fields are truncated to 2000 chars each.
 func (c *CaseLogger) Check(kind, name string, pass bool, fields map[string]any) {
 	level := "info"
 	if !pass {
 		level = "error"
 	}
-	data := map[string]any{"kind": kind, "name": name, "pass": pass}
+	data := map[string]any{"kind": kind, "pass": pass}
+	if name != "" {
+		data["name"] = name
+	}
 	for k, v := range fields {
 		data[k] = v
+	}
+	if s, ok := data["stdout"].(string); ok {
+		data["stdout"] = truncate(s)
+	}
+	if s, ok := data["stderr"].(string); ok {
+		data["stderr"] = truncate(s)
 	}
 	c.e.write(level, "check", c.env, c.task, c.installerID, data)
 }

@@ -45,6 +45,7 @@ go build -o installer-test ./cmd/installer-test
 
 # generate a text report from the captured logs
 ./installer-test report --from run.jsonl
+./installer-test report --details --from run.jsonl   # steps + install_checks/uninstall_checks sections for every case
 ./installer-test report --from - < run.jsonl      # from stdin
 
 # remove the binary when done (build artifact hygiene)

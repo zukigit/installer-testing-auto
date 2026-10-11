@@ -20,12 +20,15 @@ func (FreshInstall) Name() string { return FreshInstallName }
 
 func (t FreshInstall) Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, cl *logging.CaseLogger) Result {
 	var passed int
-	if !copyInstaller(ctx, e, cl, ri) {
+	copyCmd := fmt.Sprintf("%s -> %s", ri.LocalPath, ri.ContainerPath)
+	if err := e.Copy(ctx, ri.LocalPath, ri.ContainerPath); err != nil {
+		cl.Step("copy", copyCmd, -1, false, "", err.Error())
 		return Result{Failed: 1}
 	}
+	cl.Step("copy", copyCmd, 0, true, "", "")
 	passed++ // copy step
 	if ri.InstallCmd == "" {
-		cl.Step("install", "", -1, false,
+		cl.Step("install", "", -1, false, "",
 			fmt.Sprintf("no install command for %s: set install_command in the config", ri.Basename))
 		return Result{Passed: passed, Failed: 1}
 	}
@@ -33,17 +36,8 @@ func (t FreshInstall) Run(ctx context.Context, e env.Environment, ri *config.Res
 	return Result{Passed: passed + p, Failed: f}
 }
 
-// copyInstaller uploads the installer file; returns false and logs a failed
-// copy step when it errors.
-func copyInstaller(ctx context.Context, e env.Environment, cl *logging.CaseLogger, ri *config.ResolvedInstaller) bool {
-	copyCmd := fmt.Sprintf("%s -> %s", ri.LocalPath, ri.ContainerPath)
-	if err := e.Copy(ctx, ri.LocalPath, ri.ContainerPath); err != nil {
-		cl.Step("copy", copyCmd, -1, false, err.Error())
-		return false
-	}
-	cl.Step("copy", copyCmd, 0, true, "")
-	return true
-}
+// copyInstaller was superseded by inline copy steps (separate streams);
+// currently unused — the copy step lives directly in Run.
 
 // runPhase runs one command phase (install / uninstall) through the shell and
 // then the phase's checks. The command execution itself counts as one passed
@@ -52,15 +46,10 @@ func runPhase(ctx context.Context, e env.Environment, cl *logging.CaseLogger, ri
 	cmd := ri.Expand(tmpl)
 	stdout, stderr, code, err := e.Exec(ctx, []string{"/bin/sh", "-c", cmd})
 	pass := err == nil && code == 0
-	cl.Step(kind, cmd, code, pass, combineOut(stdout, stderr))
+	cl.Step(kind, cmd, code, pass, stdout, stderr)
 	if !pass {
 		return 0, 1
 	}
 	passed, failed := checks.Run(ctx, e, ri, cs, cl)
 	return passed + 1, failed // +1 for the successful phase command
-}
-
-// combineOut joins docker's merged output; truncation happens in the emitter.
-func combineOut(stdout, stderr string) string {
-	return stdout + stderr
 }

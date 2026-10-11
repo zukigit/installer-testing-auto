@@ -7,9 +7,13 @@ import (
 )
 
 // RenderText writes the human-readable text report of a parsed run to w.
-// It tolerates incomplete logs: unfinished cases/branches are flagged, not
-// dropped.
-func (r *Run) RenderText(w io.Writer) {
+//
+// With details=false (default, `report`) it renders compact case one-liners
+// and shows steps/check details only for failed or incomplete cases.
+// With details=true (`report --details`) every case gets its full detail:
+// steps plus the grouped check sections (install_checks / uninstall_checks / ...).
+// It tolerates incomplete logs: unfinished cases are flagged, not dropped.
+func (r *Run) RenderText(w io.Writer, details bool) {
 	fmt.Fprintln(w, "installer-testing-auto report")
 	if r.sawRunStart {
 		fmt.Fprintf(w, "  logs of run: configs=%d cases=%d parallel=%d\n", r.configs, r.casesPlanned, r.parallel)
@@ -32,12 +36,12 @@ func (r *Run) RenderText(w io.Writer) {
 			if !c.ended {
 				status = "INCOMPLETE"
 			}
-			detailParts := fmt.Sprintf("%d passed, %d failed", c.passed, c.failed)
+			fmt.Fprintf(w, "  %-30s %-10s %s  [%d passed, %d failed",
+				c.installer, c.task, status, c.passed, c.failed)
 			if c.durationMs > 0 {
-				detailParts += fmt.Sprintf(", %.1fs", c.durationMs/1000)
+				fmt.Fprintf(w, ", %.1fs", c.durationMs/1000)
 			}
-			fmt.Fprintf(w, "  %-30s %-10s %s  [%s / %s]\n",
-				c.installer, c.task, status, detailParts, c.containerName)
+			fmt.Fprintf(w, " / %s]\n", c.containerName)
 			switch {
 			case !c.ended:
 				incomplete++
@@ -46,7 +50,10 @@ func (r *Run) RenderText(w io.Writer) {
 			default:
 				passedCases++
 			}
-			TextCaseDetail(w, c)
+			printDetail := details || cNeedsDetail(c)
+			if printDetail {
+				renderDetail(w, c)
+			}
 		}
 		if e.sawEnd {
 			fmt.Fprintf(w, "  env total: %d passed, %d failed\n", e.passed, e.failed)
@@ -80,60 +87,149 @@ func (r *Run) RenderText(w io.Writer) {
 	fmt.Fprintln(w)
 }
 
-// TextCaseDetail prints the steps and failed checks of one case.
-func TextCaseDetail(w io.Writer, c *caseRec) {
-	var hasFailures bool
+// caseNeedsDetail: failed or unfinished cases always show their detail in the
+// compact (default) view.
+func cNeedsDetail(c *caseRec) bool {
+	if !c.ended || !c.pass {
+		return true
+	}
 	for _, s := range c.steps {
 		if !s.pass {
-			hasFailures = true
+			return true
 		}
 	}
 	for _, ck := range c.checks {
 		if !ck.pass {
-			hasFailures = true
+			return true
 		}
 	}
-	if !hasFailures && c.ended && c.pass {
-		return // passing case: summary line is enough
-	}
-	if !hasFailures && !c.ended {
-		fmt.Fprintf(w, "      (case interrupted — no steps/check results recorded yet)\n")
+	return false
+}
+
+// renderDetail prints the executed steps and the grouped check section of one
+// case (used for every case with --details, and for failures in the default view).
+func renderDetail(w io.Writer, c *caseRec) {
+	if len(c.steps) == 0 && len(c.checks) == 0 {
+		if !c.ended {
+			fmt.Fprintf(w, "      (case interrupted — no steps/check results recorded yet)\n")
+		}
 		return
 	}
-	fmt.Fprintln(w, "    steps / checks:")
+	if len(c.steps) > 0 {
+		fmt.Fprintln(w, "    steps:")
+	}
 	for _, s := range c.steps {
 		mark := "PASS"
 		if !s.pass {
 			mark = "FAIL"
 		}
-		line := fmt.Sprintf("      %s %-14s %s", mark, s.kind, s.command)
+		line := fmt.Sprintf("      %s  %-14s %s", mark, s.kind, s.command)
 		if s.exitCode >= 0 {
 			line += fmt.Sprintf(" (exit %d)", s.exitCode)
 		}
 		fmt.Fprintln(w, line)
-		if s.output != "" {
-			indentOutput(w, s.output)
-		}
+		// steps: only non-empty streams (copy steps are usually empty)
+		printStream(w, "stdout", s.stdout, false)
+		printStream(w, "stderr", s.stderr, false)
 	}
-	for _, ck := range c.checks {
-		mark := "PASS"
-		if !ck.pass {
-			mark = "FAIL"
+	if len(c.checks) > 0 {
+		fmt.Fprintf(w, "    %s:\n", checkSectionTitle(c.task))
+
+		labelW := 0
+		for _, ck := range c.checks {
+			labelW = maxInt(labelW, len(checkLabel(ck)))
 		}
-		fmt.Fprintf(w, "      %s %-14s %s\n", mark, ck.kind, ck.name)
-		if ck.detail != "" {
-			fmt.Fprintf(w, "        detail: %s\n", ck.detail)
+		markW := 0
+		for _, ck := range c.checks {
+			markW = maxInt(markW, len(rowLabel(ck)))
 		}
-		if ck.output != "" {
-			indentOutput(w, ck.output)
+		for _, ck := range c.checks {
+			mark := "PASS"
+			if !ck.pass {
+				mark = "FAIL"
+			}
+			fmt.Fprintf(w, "      %-*s  %-*s  %s\n", labelW, checkLabel(ck), markW, rowLabel(ck), mark)
+			if ck.detail != "" {
+				fmt.Fprintf(w, "          detail: %s\n", ck.detail)
+			}
+			// command checks: always both streams (empty shown as (empty))
+			if ck.kind == "command" {
+				printStream(w, "stdout", ck.stdout, true)
+				printStream(w, "stderr", ck.stderr, true)
+			} else {
+				printStream(w, "stdout", ck.stdout, false)
+				printStream(w, "stderr", ck.stderr, false)
+			}
 		}
 	}
 }
 
-func indentOutput(w io.Writer, output string) {
-	for _, l := range strings.Split(strings.TrimRight(output, "\n"), "\n") {
-		fmt.Fprintf(w, "        | %s\n", l)
+// checkLabel is the first column of a check row: file path or command.
+func checkLabel(ck checkRec) string {
+	if ck.kind == "file" {
+		return ck.path
 	}
+	return ck.command
+}
+
+// rowLabel is the second column: "must exist"/"must not exist" for file
+// checks, "exit code N" ("expected exit N" when a non-zero code is expected)
+// for command checks.
+func rowLabel(ck checkRec) string {
+	if ck.kind == "file" {
+		switch ck.expectation {
+		case "must_exist":
+			return "must exist"
+		case "must_not_exist":
+			return "must not exist"
+		default:
+			return ck.expectation
+		}
+	}
+	if ck.expected != 0 {
+		return fmt.Sprintf("expected exit %d", ck.expected)
+	}
+	return fmt.Sprintf("exit code %d", ck.exitCode)
+}
+
+// printStream writes one stream line unless it is empty and allowOmitted is set.
+func printStream(w io.Writer, name, value string, showEmpty bool) {
+	if value == "" && !showEmpty {
+		return
+	}
+	if value == "" {
+		fmt.Fprintf(w, "          %s: (empty)\n", name)
+		return
+	}
+	for _, l := range strings.Split(strings.TrimRight(value, "\n"), "\n") {
+		fmt.Fprintf(w, "          %s: %s\n", name, l)
+	}
+}
+
+// checkSectionTitle derives the check-section title from the task name.
+// New tasks need no report changes: unknown names fall back to "<task>_checks".
+func checkSectionTitle(taskName string) string {
+	switch taskName {
+	case "fresh-install":
+		return "install_checks"
+	case "uninstall":
+		return "uninstall_checks"
+	default:
+		sanitized := strings.Map(func(r rune) rune {
+			if r == '-' || r == ' ' {
+				return '_'
+			}
+			return r
+		}, taskName)
+		return sanitized + "_checks"
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (r *Run) keptNames() []string {
