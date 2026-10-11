@@ -22,7 +22,7 @@ installers:
       must_exist:
         - /etc/jobarranger/jobarg_server.conf.rpmnew
 
-  - pattern: "bin/jobarranger-agentd*.rpm"
+  - pattern: "bin/jobarranger-agentd*el9*.rpm"
     uninstall_checks:
       must_not_exist: [
         "/var/log/jobarranger",
@@ -34,7 +34,7 @@ installers:
       must_exist:
         - /etc/jobarranger/jobarg_agentd.conf.rpmnew
 
-  - pattern: "bin/jobarranger-manager*.rpm"
+  - pattern: "bin/jobarranger-manager*el9*.rpm"
     install_checks:
       must_exist: [
         "/usr/share/jobarranger/modules/Module.php",
@@ -50,4 +50,4 @@ installers:
       must_exist:
         - /etc/jobarranger/web/jam.config.php.rpmnew
 
-  - pattern: "bin/jobarranger-utils*.rpm"
+  - pattern: "bin/jobarranger-utils*el9*.rpm"
