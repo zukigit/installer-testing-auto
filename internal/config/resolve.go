@@ -31,10 +31,13 @@ type ResolvedInstaller struct {
 	ContainerPath   string  // path inside the environment
 	Basename        string  // file name without directories
 	PackageName     string  // package name derived from the file name
+	Version         string  // MAJOR.MINOR.PATCH[-Suffix], "" if not standard
 	InstallCmd      string  // template (may be empty -> no default for ext)
 	UninstallCmd    string  // template (may be empty)
+	UpgradeCmd      string  // template (may be empty)
 	InstallChecks   *Checks `yaml:"install_checks"`
 	UninstallChecks *Checks `yaml:"uninstall_checks"`
+	UpgradeChecks   *Checks `yaml:"upgrade_checks"`
 }
 
 // Expand substitutes {installer}, {basename} and {package} in a command
@@ -94,14 +97,22 @@ func resolveInstaller(spec InstallerSpec, local, workdir string) (*ResolvedInsta
 		PackageName:     derivePackage(base),
 		InstallCmd:      spec.InstallCommand,
 		UninstallCmd:    spec.UninstallCommand,
+		UpgradeCmd:      spec.UpgradeCommand,
 		InstallChecks:   spec.InstallChecks,
 		UninstallChecks: spec.UninstallChecks,
+		UpgradeChecks:   spec.UpgradeChecks,
 	}
 	if ri.InstallCmd == "" {
 		ri.InstallCmd = defaultInstallCmd(base)
 	}
 	if ri.UninstallCmd == "" {
 		ri.UninstallCmd = defaultUninstallCmd(base)
+	}
+	if ri.UpgradeCmd == "" {
+		ri.UpgradeCmd = defaultUpgradeCmd(base)
+	}
+	if v, ok := ExtractVersionFromFilename(base); ok {
+		ri.Version = v.String()
 	}
 	return ri, nil
 }
@@ -115,6 +126,18 @@ func defaultInstallCmd(base string) string {
 		return "rpm -ivh {installer}"
 	case ".sh":
 		return "sh {installer}"
+	default:
+		return ""
+	}
+}
+
+// defaultUpgradeCmd returns the extension-based upgrade command default.
+func defaultUpgradeCmd(base string) string {
+	switch strings.ToLower(filepath.Ext(base)) {
+	case ".rpm":
+		return "rpm -Uvh {installer}" // the upgrade flag, vs -ivh for fresh-install
+	case ".deb":
+		return "dpkg -i {installer}" // dpkg -i upgrades in place
 	default:
 		return ""
 	}

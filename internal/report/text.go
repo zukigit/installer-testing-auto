@@ -38,6 +38,8 @@ func (p palette) colorize(code, s string) string {
 
 func statusText(c *caseRec) string {
 	switch {
+	case c.skipped:
+		return "⏸ SKIPPED"
 	case !c.ended:
 		return "? INCOMPLETE"
 	case c.pass:
@@ -49,6 +51,8 @@ func statusText(c *caseRec) string {
 
 func statusColor(c *caseRec) string {
 	switch {
+	case c.skipped:
+		return ansiYellow
 	case !c.ended:
 		return ansiYellow
 	case c.pass:
@@ -70,6 +74,30 @@ func durationText(c *caseRec) string {
 		return "-"
 	}
 	return fmt.Sprintf("%.1fs", c.durationMs/1000)
+}
+
+// taskLineSuffix appends the upgrade source / skip reason to a task line.
+func taskLineSuffix(c *caseRec) string {
+	switch {
+	case c.skipped:
+		return fmt.Sprintf("  (%s)", skipReasonText(c.skipReason))
+	case c.fromInstaller != "":
+		return fmt.Sprintf("  (from %s)", c.fromInstaller)
+	default:
+		return ""
+	}
+}
+
+// skipReasonText humanizes the case_skipped reason.
+func skipReasonText(reason string) string {
+	switch reason {
+	case "no_older_version":
+		return "no older version"
+	case "nonstandard_version":
+		return "non-standard version"
+	default:
+		return strings.ReplaceAll(reason, "_", " ")
+	}
 }
 
 // ---------- layout (widths computed once per report) ----------
@@ -155,7 +183,6 @@ func (r *Run) groups(e *envRec) []*caseGroup {
 // and totals follow the confirmed v2.3 layout. With details=false the report
 // renders one short line per task; failed/incomplete cases get their failure
 // details underneath. With details=true every case renders its full detail
-// (steps except passing copies + all check rows), plus the container name.
 func (r *Run) RenderText(w io.Writer, details bool) {
 	p := palette{stdoutIsTerminal()}
 	lay := r.layout()
@@ -171,7 +198,7 @@ func (r *Run) RenderText(w io.Writer, details bool) {
 	}
 	fmt.Fprintln(w)
 
-	var passedCases, failedCases, incomplete int
+	var passedCases, failedCases, incomplete, skippedCases int
 
 	for _, e := range r.envs {
 		fmt.Fprintf(w, "env %s (image %s, workdir %s)\n", e.name, e.image, e.workdir)
@@ -181,17 +208,30 @@ func (r *Run) RenderText(w io.Writer, details bool) {
 			for _, c := range g.cases {
 				r.printTaskLine(w, c, p, lay)
 				switch {
+				case c.skipped:
+					skippedCases++
+					if details {
+						r.printTaskDetail(w, c, p, lay)
+					}
 				case !c.ended:
 					incomplete++
+					if details {
+						r.printTaskDetail(w, c, p, lay)
+					} else {
+						r.printFailureDetail(w, c, p, lay)
+					}
 				case !c.pass:
 					failedCases++
+					if details {
+						r.printTaskDetail(w, c, p, lay)
+					} else {
+						r.printFailureDetail(w, c, p, lay)
+					}
 				default:
 					passedCases++
-				}
-				if details {
-					r.printTaskDetail(w, c, p, lay)
-				} else if !c.ended || !c.pass {
-					r.printFailureDetail(w, c, p, lay)
+					if details {
+						r.printTaskDetail(w, c, p, lay)
+					}
 				}
 			}
 			fmt.Fprintln(w)
@@ -218,21 +258,27 @@ func (r *Run) RenderText(w io.Writer, details bool) {
 	if incomplete > 0 {
 		totalLine += fmt.Sprintf(", %d incomplete", incomplete)
 	}
+	if skippedCases > 0 {
+		totalLine += fmt.Sprintf(", %d skipped", skippedCases)
+	}
 	totalLine += ")"
 	fmt.Fprintln(w, totalLine)
 }
-
 func (r *Run) printTaskLine(w io.Writer, c *caseRec, p palette, lay *reportLayout) {
 	taskCell := padDisplay(c.task, lay.taskW)
 	statusCell := p.colorize(statusColor(c), padDisplay(statusText(c), lay.statusW))
 	counts := padDisplay(countsText(c), lay.countsW)
 	dur := padLeft(durationText(c), lay.durW)
-	fmt.Fprintf(w, "    %s   %s   %s   %s\n", taskCell, statusCell, counts, dur)
+	fmt.Fprintf(w, "    %s   %s   %s   %s%s\n", taskCell, statusCell, counts, dur, taskLineSuffix(c))
 }
 
 // printTaskDetail renders the full detail of one task (--details view):
 // container, steps (passing copies hidden), and all check rows.
 func (r *Run) printTaskDetail(w io.Writer, c *caseRec, p palette, lay *reportLayout) {
+	if c.skipped {
+		fmt.Fprintf(w, "      skipped: %s\n", skipReasonText(c.skipReason))
+		return
+	}
 	if c.containerName != "" {
 		// name only — the id stays available in the logs (case_start/case_end)
 		fmt.Fprintf(w, "      container: %s\n", c.containerName)

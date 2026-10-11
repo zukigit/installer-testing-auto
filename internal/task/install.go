@@ -18,7 +18,8 @@ func init() { register(FreshInstall{}) }
 
 func (FreshInstall) Name() string { return FreshInstallName }
 
-func (t FreshInstall) Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, cl *logging.CaseLogger) Result {
+func (t FreshInstall) Run(ctx context.Context, e env.Environment, in Input, cl *logging.CaseLogger) Result {
+	ri := in.Installer
 	copyCmd := fmt.Sprintf("%s -> %s", ri.LocalPath, ri.ContainerPath)
 	if err := e.Copy(ctx, ri.LocalPath, ri.ContainerPath); err != nil {
 		cl.Step("copy", copyCmd, -1, false, "", err.Error())

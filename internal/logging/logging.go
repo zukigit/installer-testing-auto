@@ -21,29 +21,31 @@ type Emitter struct {
 func New(w io.Writer) *Emitter { return &Emitter{w: w} }
 
 type envelope struct {
-	TS        string         `json:"ts"`
-	Level     string         `json:"level"`
-	Event     string         `json:"event"`
-	Env       string         `json:"env,omitempty"`
-	Task      string         `json:"task,omitempty"`
-	Installer string         `json:"installer,omitempty"`
-	Data      map[string]any `json:"data"`
+	TS            string         `json:"ts"`
+	Level         string         `json:"level"`
+	Event         string         `json:"event"`
+	Env           string         `json:"env,omitempty"`
+	Task          string         `json:"task,omitempty"`
+	Installer     string         `json:"installer,omitempty"`
+	FromInstaller string         `json:"from_installer,omitempty"`
+	Data          map[string]any `json:"data"`
 }
 
 const tsFormat = "2006-01-02T15:04:05.000Z07:00"
 
-func (e *Emitter) write(level, event, envName, taskName, installer string, data map[string]any) {
+func (e *Emitter) write(level, event, envName, taskName, installer, fromInstaller string, data map[string]any) {
 	if data == nil {
 		data = map[string]any{}
 	}
 	line, err := json.Marshal(envelope{
-		TS:        time.Now().UTC().Format(tsFormat),
-		Level:     level,
-		Event:     event,
-		Env:       envName,
-		Task:      taskName,
-		Installer: installer,
-		Data:      data,
+		TS:            time.Now().UTC().Format(tsFormat),
+		Level:         level,
+		Event:         event,
+		Env:           envName,
+		Task:          taskName,
+		Installer:     installer,
+		FromInstaller: fromInstaller,
+		Data:          data,
 	})
 	if err != nil {
 		return
@@ -55,7 +57,7 @@ func (e *Emitter) write(level, event, envName, taskName, installer string, data 
 
 // RunStart announces the run: number of configs, planned cases and parallel limit.
 func (e *Emitter) RunStart(configs, cases, parallel int) {
-	e.write("info", "run_start", "", "", "", map[string]any{
+	e.write("info", "run_start", "", "", "", "", map[string]any{
 		"configs": configs, "cases": cases, "parallel": parallel,
 	})
 }
@@ -66,42 +68,43 @@ func (e *Emitter) RunEnd(passed, failed, configErrors int) {
 	if configErrors > 0 {
 		data["config_errors"] = configErrors
 	}
-	e.write("info", "run_end", "", "", "", data)
+	e.write("info", "run_end", "", "", "", "", data)
 }
 
 // Error reports an infrastructure error outside a case context.
 func (e *Emitter) Error(message string) {
-	e.write("error", "error", "", "", "", map[string]any{"message": message})
+	e.write("error", "error", "", "", "", "", map[string]any{"message": message})
 }
 
 // EnvStart announces the first started case of an environment.
 func (e *Emitter) EnvStart(name, image, workdir string) {
-	e.write("info", "env_start", name, "", "", map[string]any{
+	e.write("info", "env_start", name, "", "", "", map[string]any{
 		"image": image, "workdir": workdir,
 	})
 }
 
 // EnvEnd closes an environment: emitted when its last case finished.
 func (e *Emitter) EnvEnd(name string, passed, failed int) {
-	e.write("info", "env_end", name, "", "", map[string]any{
+	e.write("info", "env_end", name, "", "", "", map[string]any{
 		"passed": passed, "failed": failed,
 	})
 }
 
-// CaseLogger emits the events of one (environment, task, installer) case.
+// CaseLogger emits the events of one (environment, task, installer[, from]) case.
 type CaseLogger struct {
-	e                      *Emitter
-	env, task, installerID string
+	e                    *Emitter
+	env, task, installer string
+	fromInstaller        string // upgrade cases: the OLD installer
 }
 
-// Case binds a case context (env / task / installer) to the emitter.
-func (e *Emitter) Case(envName, taskName, installer string) *CaseLogger {
-	return &CaseLogger{e: e, env: envName, task: taskName, installerID: installer}
+// Case binds a case context (env / task / installer / from) to the emitter.
+func (e *Emitter) Case(envName, taskName, installer, fromInstaller string) *CaseLogger {
+	return &CaseLogger{e: e, env: envName, task: taskName, installer: installer, fromInstaller: fromInstaller}
 }
 
 // CaseStart logs the case container creation.
 func (c *CaseLogger) CaseStart(containerID, containerName string) {
-	c.e.write("info", "case_start", c.env, c.task, c.installerID, map[string]any{
+	c.e.write("info", "case_start", c.env, c.task, c.installer, c.fromInstaller, map[string]any{
 		"container_id": containerID, "container_name": containerName,
 	})
 }
@@ -123,7 +126,7 @@ func (c *CaseLogger) CaseEnd(containerID string, pass bool, passed, failed int, 
 	if kept {
 		data["kept"] = true
 	}
-	c.e.write(level, "case_end", c.env, c.task, c.installerID, data)
+	c.e.write(level, "case_end", c.env, c.task, c.installer, c.fromInstaller, data)
 }
 
 // Step logs one executed phase step: copy / setup-install / install / uninstall.
@@ -143,7 +146,7 @@ func (c *CaseLogger) Step(kind, command string, exitCode int, pass bool, stdout,
 	if out := truncate(stderr); out != "" {
 		data["stderr"] = out
 	}
-	c.e.write(level, "step", c.env, c.task, c.installerID, data)
+	c.e.write(level, "step", c.env, c.task, c.installer, c.fromInstaller, data)
 }
 
 // Check logs one check result. For file checks fields carry `path` and
@@ -168,12 +171,18 @@ func (c *CaseLogger) Check(kind, name string, pass bool, fields map[string]any) 
 	if s, ok := data["stderr"].(string); ok {
 		data["stderr"] = truncate(s)
 	}
-	c.e.write(level, "check", c.env, c.task, c.installerID, data)
+	c.e.write(level, "check", c.env, c.task, c.installer, c.fromInstaller, data)
+}
+
+// CaseSkipped logs that an installer cannot participate in the upgrade task
+// (reason: no_older_version | nonstandard_version).
+func (c *CaseLogger) CaseSkipped(reason string) {
+	c.e.write("info", "case_skipped", c.env, c.task, c.installer, c.fromInstaller, map[string]any{"reason": reason})
 }
 
 // Error logs an infrastructure error within the case context.
 func (c *CaseLogger) Error(message string) {
-	c.e.write("error", "error", c.env, c.task, c.installerID, map[string]any{"message": message})
+	c.e.write("error", "error", c.env, c.task, c.installer, c.fromInstaller, map[string]any{"message": message})
 }
 
 func truncate(s string) string {

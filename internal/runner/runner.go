@@ -58,6 +58,14 @@ type caseDef struct {
 	bundle *config.Bundle
 	ri     *config.ResolvedInstaller
 	t      task.Task
+	from   *config.ResolvedInstaller // upgrade task: the OLD installer (nil otherwise)
+}
+
+// skipDef is an installer that cannot participate in the upgrade task.
+type skipDef struct {
+	bundle *config.Bundle
+	ri     *config.ResolvedInstaller
+	reason string // no_older_version | nonstandard_version
 }
 
 // Run executes every selected (installer, task) case from every discovered
@@ -75,13 +83,19 @@ func Run(ctx context.Context, opts Options) int {
 		return 2
 	}
 
-	cases, envs, configErrors := buildQueue(paths, opts, log)
+	cases, envs, skips, configErrors := buildQueue(paths, opts, log)
 	if len(cases) == 0 {
 		log.Error("no cases to run (check --task/--installer filters and the package list in bin/)")
 		return 1
 	}
 
 	log.RunStart(len(paths), len(cases), opts.Parallel)
+
+	// upgrade skips are progress events, not failures — emitted before any case
+	for _, sk := range skips {
+		cl := log.Case(sk.bundle.EnvName(), task.UpgradeName, sk.ri.Basename, "")
+		cl.CaseSkipped(sk.reason)
+	}
 
 	tr := &envTracker{log: log, info: envs}
 	names := &nameAssigner{used: map[string]int{}}
@@ -121,10 +135,15 @@ func Run(ctx context.Context, opts Options) int {
 // buildQueue resolves every config and expands the case matrix
 // (installer files x selected tasks), applying the --installer filter.
 // Bad configs are counted and logged as `error` events, not fatal.
-func buildQueue(paths []string, opts Options, log *logging.Emitter) ([]caseDef, map[string]*envInfo, int) {
+// The upgrade task additionally pairs every installable with the older
+// versions of the same package (whole resolved list of the config) and
+// emits `case_skipped` events for the ones that cannot participate.
+func buildQueue(paths []string, opts Options, log *logging.Emitter) ([]caseDef, map[string]*envInfo, []skipDef, int) {
 	var cases []caseDef
 	envs := map[string]*envInfo{}
 	configErrors := 0
+	var skips []skipDef
+	upgradeSelected := taskSelected(opts.Tasks, task.UpgradeName)
 	for _, path := range paths {
 		b, err := config.LoadBundle(path)
 		if err != nil {
@@ -139,6 +158,7 @@ func buildQueue(paths []string, opts Options, log *logging.Emitter) ([]caseDef, 
 			envs[envName] = info
 		}
 		for _, ri := range b.Installers {
+			inScope := true
 			if opts.Installer != "" {
 				ok, merr := filepath.Match(opts.Installer, ri.LocalPath)
 				if merr != nil {
@@ -146,12 +166,17 @@ func buildQueue(paths []string, opts Options, log *logging.Emitter) ([]caseDef, 
 					configErrors++
 					continue
 				}
-				if !ok {
-					continue
-				}
+				inScope = ok
 			}
 			for _, t := range task.All() {
 				if !taskSelected(opts.Tasks, t.Name()) {
+					continue
+				}
+				if t.Name() == task.UpgradeName {
+					buildUpgradeCases(b, ri, allInstallers(b), inScope, upgradeSelected, &cases, &skips, info)
+					continue
+				}
+				if !inScope {
 					continue
 				}
 				cases = append(cases, caseDef{bundle: b, ri: ri, t: t})
@@ -159,7 +184,51 @@ func buildQueue(paths []string, opts Options, log *logging.Emitter) ([]caseDef, 
 			}
 		}
 	}
-	return cases, envs, configErrors
+	return cases, envs, skips, configErrors
+}
+
+// allInstallers is the whole resolved package list of a config — the
+// old-version pool for upgrade pairing (confirmed decision).
+func allInstallers(b *config.Bundle) []*config.ResolvedInstaller { return b.Installers }
+
+// buildUpgradeCases resolves one installer's upgrade participation:
+// skip events (no older version / non-standard version) or one case per older
+// version of the same package. Skips are emitted only for in-scope installers.
+func buildUpgradeCases(b *config.Bundle, ri *config.ResolvedInstaller, pool []*config.ResolvedInstaller, inScope, upgradeSelected bool, cases *[]caseDef, skips *[]skipDef, info *envInfo) {
+	if !upgradeSelected {
+		return
+	}
+	var older []*config.ResolvedInstaller
+	if _, ok := config.ParseVersion(ri.Version); ok {
+		aMtime := fileMtime(ri.LocalPath)
+		for _, o := range pool {
+			if o == ri || o.PackageName != ri.PackageName {
+				continue
+			}
+			if _, ok := config.ParseVersion(o.Version); !ok {
+				continue
+			}
+			if config.CompareInstallerVersions(o.Version, ri.Version, fileMtime(o.LocalPath), aMtime) < 0 {
+				older = append(older, o)
+			}
+		}
+	}
+	if !inScope {
+		return // filtered out: not part of this run at all
+	}
+	if len(older) == 0 {
+		// skip event only for installers that are otherwise part of the run
+		if _, ok := config.ParseVersion(ri.Version); !ok {
+			*skips = append(*skips, skipDef{bundle: b, ri: ri, reason: "nonstandard_version"})
+		} else {
+			*skips = append(*skips, skipDef{bundle: b, ri: ri, reason: "no_older_version"})
+		}
+		return
+	}
+	for _, o := range older {
+		*cases = append(*cases, caseDef{bundle: b, ri: ri, t: task.Upgrade{}, from: o})
+		info.total++
+	}
 }
 
 // taskSelected: empty request means all tasks.
@@ -181,7 +250,7 @@ func runCase(ctx context.Context, log *logging.Emitter, tr *envTracker, names *n
 	}
 	envName := c.bundle.EnvName()
 	spec := c.bundle.Config.Environment
-	cl := log.Case(envName, c.t.Name(), c.ri.Basename)
+	cl := log.Case(envName, c.t.Name(), c.ri.Basename, fromName(c))
 	started := time.Now()
 
 	tr.caseStarted(envName)
@@ -190,7 +259,7 @@ func runCase(ctx context.Context, log *logging.Emitter, tr *envTracker, names *n
 		Name:          envName,
 		Image:         spec.Image,
 		Workdir:       spec.Workdir,
-		ContainerName: names.next(envName, c.ri.Basename, c.t.Name()),
+		ContainerName: names.assign(containerRawName(envName, c)),
 	}
 	e, err := env.New(spec.Type, envOpts)
 	if err == nil {
@@ -206,7 +275,7 @@ func runCase(ctx context.Context, log *logging.Emitter, tr *envTracker, names *n
 	} else {
 		containerID = containerIDOf(e)
 		cl.CaseStart(containerID, envOpts.ContainerName)
-		res := c.t.Run(ctx, e, c.ri, cl)
+		res := c.t.Run(ctx, e, task.Input{Installer: c.ri, From: c.from}, cl)
 		passed, failed = res.Passed, res.Failed
 		if opts.Keep && failed > 0 {
 			kept = true // container stays up for debugging
@@ -218,6 +287,35 @@ func runCase(ctx context.Context, log *logging.Emitter, tr *envTracker, names *n
 	cl.CaseEnd(containerID, failed == 0, passed, failed, time.Since(started).Milliseconds(), kept)
 	tr.caseFinished(envName, passed, failed)
 	return passed, failed
+}
+
+// fromName is the OLD installer basename for upgrade cases (envelope field).
+func fromName(c caseDef) string {
+	if c.from == nil {
+		return ""
+	}
+	return c.from.Basename
+}
+
+// containerRawName builds the deterministic raw container name; upgrade cases
+// carry both versions: ita-<env>-<new-stem>-from-<old-version>-upgrade.
+func containerRawName(envName string, c caseDef) string {
+	base := c.ri.Basename
+	taskPart := c.t.Name()
+	if c.from != nil {
+		base = strings.TrimSuffix(base, filepath.Ext(base))
+		taskPart = "from-" + c.from.Version + "-" + c.t.Name()
+	}
+	return strings.ToLower("ita-" + envName + "-" + base + "-" + taskPart)
+}
+
+// fileMtime is the portable "created date" (modification time) of a file.
+func fileMtime(path string) time.Time {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
 }
 
 func containerIDOf(e env.Environment) string {
@@ -285,9 +383,8 @@ type nameAssigner struct {
 
 var nameSanitizer = regexp.MustCompile(`[^a-z0-9]+`)
 
-func (n *nameAssigner) next(envName, basename, taskName string) string {
-	raw := strings.ToLower("ita-" + envName + "-" + basename + "-" + taskName)
-	clean := strings.Trim(nameSanitizer.ReplaceAllString(raw, "-"), "-")
+func (n *nameAssigner) assign(raw string) string {
+	clean := strings.Trim(nameSanitizer.ReplaceAllString(strings.ToLower(raw), "-"), "-")
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.used[clean]++

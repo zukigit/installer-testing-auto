@@ -137,6 +137,59 @@ func TestParseInvalidJSON(t *testing.T) {
 	}
 }
 
+const upgradeNDJSON = `
+{"ts":"2026-10-10T06:00:00.000Z","level":"info","event":"run_start","data":{"configs":1,"cases":2,"parallel":5}}
+{"ts":"2026-10-10T06:00:00.010Z","level":"info","event":"env_start","env":"redhat-9","data":{"image":"rhel9","workdir":"/tmp"}}
+
+{"ts":"2026-10-10T06:00:00.400Z","level":"info","event":"case_skipped","env":"redhat-9","task":"upgrade","installer":"myapp-0.1.1-1.rpm","data":{"reason":"no_older_version"}}
+
+{"ts":"2026-10-10T06:00:01.000Z","level":"info","event":"case_start","env":"redhat-9","task":"upgrade","installer":"myapp-0.1.2-1.rpm","from_installer":"myapp-0.1.1-1.rpm","data":{"container_id":"a1","container_name":"ita-redhat-9-myapp-0-1-2-1-rpm-from-0-1-1-1-upgrade"}}
+{"ts":"2026-10-10T06:00:01.100Z","level":"info","event":"step","env":"redhat-9","task":"upgrade","installer":"myapp-0.1.2-1.rpm","from_installer":"myapp-0.1.1-1.rpm","data":{"kind":"setup-install","command":"rpm -ivh /tmp/myapp-0.1.1-1.rpm","exit_code":0,"pass":true}}
+{"ts":"2026-10-10T06:00:01.200Z","level":"info","event":"step","env":"redhat-9","task":"upgrade","installer":"myapp-0.1.2-1.rpm","from_installer":"myapp-0.1.1-1.rpm","data":{"kind":"upgrade","command":"rpm -Uvh /tmp/myapp-0.1.2-1.rpm","exit_code":0,"pass":true}}
+{"ts":"2026-10-10T06:00:01.300Z","level":"info","event":"check","env":"redhat-9","task":"upgrade","installer":"myapp-0.1.2-1.rpm","from_installer":"myapp-0.1.1-1.rpm","data":{"kind":"file","path":"/usr/bin/myapp","expectation":"must_exist","exit_code":0,"pass":true}}
+{"ts":"2026-10-10T06:00:01.500Z","level":"info","event":"case_end","env":"redhat-9","task":"upgrade","installer":"myapp-0.1.2-1.rpm","from_installer":"myapp-0.1.1-1.rpm","data":{"container_id":"a1","pass":true,"passed":3,"failed":0,"duration_ms":2700}}
+{"ts":"2026-10-10T06:00:02.000Z","level":"info","event":"env_end","env":"redhat-9","data":{"passed":3,"failed":0}}
+{"ts":"2026-10-10T06:00:02.000Z","level":"info","event":"run_end","data":{"passed":3,"failed":0}}
+`
+
+func TestParseAndRenderUpgrade(t *testing.T) {
+	run, err := Parse(strings.NewReader(upgradeNDJSON))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var sb strings.Builder
+	run.RenderText(&sb, false)
+	out := sb.String()
+	for _, want := range []string{
+		"  myapp-0.1.1-1.rpm",
+		"⏸ SKIPPED",
+		"(no older version)",
+		"  myapp-0.1.2-1.rpm",
+		"✓ PASS", "3/3",
+		"(from myapp-0.1.1-1.rpm)",
+		"TOTAL: 2 cases (1 passed, 0 failed, 1 skipped)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("upgrade compact report missing %q\nreport:\n%s", want, out)
+		}
+	}
+
+	var db strings.Builder
+	run.RenderText(&db, true)
+	down := db.String()
+	for _, want := range []string{
+		"container: ita-redhat-9-myapp-0-1-2-1-rpm-from-0-1-1-1-upgrade",
+		"setup-install: rpm -ivh /tmp/myapp-0.1.1-1.rpm (exit 0)",
+		"upgrade: rpm -Uvh /tmp/myapp-0.1.2-1.rpm (exit 0)",
+		"upgrade_checks:",
+		"skipped: no older version",
+	} {
+		if !strings.Contains(down, want) {
+			t.Errorf("--details upgrade report missing %q\nreport:\n%s", want, down)
+		}
+	}
+}
+
 func TestCheckSectionTitle(t *testing.T) {
 	cases := map[string]string{
 		"fresh-install": "install_checks",

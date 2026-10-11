@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zukigit/installer-testing-auto/internal/config"
 	"github.com/zukigit/installer-testing-auto/internal/env"
 	"github.com/zukigit/installer-testing-auto/internal/logging"
 )
@@ -18,7 +17,8 @@ func init() { register(Uninstall{}) }
 
 func (Uninstall) Name() string { return UninstallName }
 
-func (t Uninstall) Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, cl *logging.CaseLogger) Result {
+func (t Uninstall) Run(ctx context.Context, e env.Environment, in Input, cl *logging.CaseLogger) Result {
+	ri := in.Installer
 	// setup: copy + install (unchecked — install_checks belong to fresh-install)
 	copyCmd := fmt.Sprintf("%s -> %s", ri.LocalPath, ri.ContainerPath)
 	if err := e.Copy(ctx, ri.LocalPath, ri.ContainerPath); err != nil {

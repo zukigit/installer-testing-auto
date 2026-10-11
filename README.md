@@ -15,12 +15,18 @@ Automation tool to test installer files on target environments using
    - `fresh-install` case: copy installer → install → install checks.
    - `uninstall` case (standalone): copy installer → install (setup, unchecked) →
      uninstall → uninstall checks.
+   - `upgrade` case (standalone, requires versions like `MAJOR.MINOR.PATCH-suffix`
+     in file names): copy old installer → install old (setup) → copy new installer →
+     upgrade → `upgrade_checks`. Installers without older versions (or whose file
+     names carry no version) are **skipped** and shown as such in the report.
+     See `docs/upgrade-task-plan.md` for the pairing rules.
 4. Output is **live JSON logs** (NDJSON, one event per line) — no summary at the end;
    the exit code is `0` only when every case passed.
 5. Build a report afterwards from the captured logs with the `report` subcommand.
 
-See `docs/installer-testing-tool-plan.md` (v1 baseline) and
-`docs/container-per-task-plan.md` (v2 design) for the full design.
+See `docs/installer-testing-tool-plan.md` (v1 baseline),
+`docs/container-per-task-plan.md` (v2 design) and `docs/upgrade-task-plan.md`
+for the full design.
 
 ## Usage
 

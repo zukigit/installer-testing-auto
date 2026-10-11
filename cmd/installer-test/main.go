@@ -30,19 +30,21 @@ Usage:
   installer-test report --from FILE|-
 
 Subcommands:
-  run     test installer files: every (installer file x task) pair is an independent
-          case with its own container; cases run in parallel through a global pool
-          (--parallel, default 5) that caps the total containers running at once.
-          Output is live JSON log lines (NDJSON); no summary is printed.
-          Tasks are independent: uninstall is standalone — it installs first
-          (setup) inside its own container, then uninstalls and verifies.
+  run     test installer files: every installer x task pair is an independent
+          case with its own container; cases run in parallel through a global
+          pool (--parallel, default 5) that caps the total containers running
+          at once. Output is live JSON log lines (NDJSON); no summary is
+          printed. Tasks are independent of each other:
+          fresh-install, uninstall (standalone) and upgrade (requires
+          MAJOR.MINOR.PATCH[-suffix] file names; pairs every installer with
+          the older versions of the same package; skipped otherwise).
   list    dry-run: show environments, matched installers and resolved commands
   report  render a text report from captured run logs (NDJSON)
 
 Flags (run):
   --config GLOB      config glob; default: configs/*.yaml (all environments)
   --task LIST        comma-separated tasks; default: all tasks
-                     available tasks: fresh-install, uninstall (standalone)
+                     available: fresh-install, uninstall, upgrade (standalone)
   --installer GLOB   filter the package list, e.g. "bin/my-app-*.rpm"
   --parallel N       max containers running at the same time (default 5, min 1)
   --keep             keep containers of failed cases for debugging

@@ -51,13 +51,14 @@ func ListBundle(b *config.Bundle) {
 
 // Event is one NDJSON log line.
 type Event struct {
-	TS        string         `json:"ts"`
-	Level     string         `json:"level"`
-	Event     string         `json:"event"`
-	Env       string         `json:"env"`
-	Task      string         `json:"task"`
-	Installer string         `json:"installer"`
-	Data      map[string]any `json:"data"`
+	TS            string         `json:"ts"`
+	Level         string         `json:"level"`
+	Event         string         `json:"event"`
+	Env           string         `json:"env"`
+	Task          string         `json:"task"`
+	Installer     string         `json:"installer"`
+	FromInstaller string         `json:"from_installer"`
+	Data          map[string]any `json:"data"`
 }
 
 func (ev *Event) str(key string) string {
@@ -97,6 +98,9 @@ type checkRec struct {
 
 type caseRec struct {
 	env, task, installer string
+	fromInstaller        string // upgrade cases: the OLD installer
+	skipped              bool
+	skipReason           string
 	containerID          string
 	containerName        string
 	steps                []stepRec
@@ -179,11 +183,11 @@ func (r *Run) env(name string) *envRec {
 }
 
 func (r *Run) caseCtx(ev *Event) *caseRec {
-	key := ev.Env + "\x00" + ev.Task + "\x00" + ev.Installer
+	key := ev.Env + "\x00" + ev.Installer + "\x00" + ev.Task + "\x00" + ev.FromInstaller
 	if c, ok := r.caseByKey[key]; ok {
 		return c
 	}
-	c := &caseRec{env: ev.Env, task: ev.Task, installer: ev.Installer}
+	c := &caseRec{env: ev.Env, task: ev.Task, installer: ev.Installer, fromInstaller: ev.FromInstaller}
 	r.caseByKey[key] = c
 	r.allCases = append(r.allCases, c)
 	e := r.env(ev.Env)
@@ -211,6 +215,10 @@ func (r *Run) apply(ev *Event) {
 		c := r.caseCtx(ev)
 		c.containerID = ev.str("container_id")
 		c.containerName = ev.str("container_name")
+	case "case_skipped":
+		c := r.caseCtx(ev)
+		c.skipped = true
+		c.skipReason = ev.str("reason")
 	case "step":
 		c := r.caseCtx(ev)
 		code, _ := ev.num("exit_code")

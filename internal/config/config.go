@@ -50,8 +50,10 @@ type InstallerSpec struct {
 	Pattern          string  `yaml:"pattern"`
 	InstallCommand   string  `yaml:"install_command"`
 	UninstallCommand string  `yaml:"uninstall_command"`
+	UpgradeCommand   string  `yaml:"upgrade_command"`
 	InstallChecks    *Checks `yaml:"install_checks"`
 	UninstallChecks  *Checks `yaml:"uninstall_checks"`
+	UpgradeChecks    *Checks `yaml:"upgrade_checks"`
 }
 
 // Config is the top level of one YAML config file.
