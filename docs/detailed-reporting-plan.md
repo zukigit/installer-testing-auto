@@ -1,14 +1,16 @@
 # Detailed Reporting Plan (v2.1) — per-task check details in the report
 
-> Status: **DRAFT — awaiting confirmation**
+> Status: **CONFIRMED — ready to implement**
 > Baseline: the implemented v2 design in `docs/container-per-task-plan.md`
 > (runner, parallel cases, NDJSON logs, `report` subcommand).
 
 ## 1. Goal
 
 The text report currently shows a one-line summary per case and full details
-only for **failed** cases. This plan makes the report show the **details of
-every task**, grouped by check phase, for **all cases (pass and fail)**:
+only for **failed** cases. This plan adds a **`report --details`** flag that
+shows the details of every task, grouped by check phase, for **all cases
+(pass and fail)**. The default report stays compact (one-liners + failure
+details):
 
 - file checks: path → `must exist` / `must not exist` → pass or fail
 - command checks: command → exit code, **stdout and stderr** (separately)
@@ -31,11 +33,12 @@ upgrade_checks:            (future task — see section 5)
 
 | Topic | Current | This plan |
 |-------|---------|-----------|
-| Detail visibility | only failed cases show steps/checks | **every case** shows its full detail |
+| Detail visibility | only failed cases show steps/checks | default unchanged; **`report --details`** shows every case's full detail (pass and fail) |
 | Detail grouping | flat "steps / checks" list | grouped per task: **`install_checks` / `uninstall_checks`** sections |
 | Command output | single combined `output` field | separate **`stdout` and `stderr`** fields (event + report) |
 | File check data | `name` = "must_exist: /path" | structured `path` + `expectation` (`must_exist`/`must_not_exist`) |
-| Summary | per-case one-liner + totals | kept, on top of the details |
+| Summary | per-case one-liner + totals | default; `--details` renders sections below each case line |
+| Old log compatibility | — | **clean break: new field shape only** (no `output`/stringly-`name` fallback) |
 
 ## 3. Event schema changes (NDJSON)
 
@@ -65,7 +68,7 @@ inspecting in the report).
   into two buffers → real separated stdout/stderr (already a transitive dependency).
 - The `Environment` interface does **not** change.
 
-## 4. Report layout
+## 4. Report layout (`report --details`)
 
 ```text
 installer-testing-auto report
@@ -122,14 +125,12 @@ to `<task>_checks`.
 ## 6. Trade-offs
 
 - **Log size:** stdout/stderr are already captured; splitting them into two
-  fields keeps the same volume. Truncation stays (2000 chars per stream today,
-  noted in the events) — the report shows a `...` marker when truncated.
-- **Backward compatibility:** old logs (combined `output`, stringly `name`)
-  still render — the report keeps a fallback path for both. New fields are
-  preferred when present.
-- **Rendering noise:** showing every passing check's output makes reports
-  longer; that is the point of this plan (opt-out would be a `--summary` flag —
-  open question 1).
+  fields keeps the same volume. Truncation stays (2000 chars per stream —
+  confirmed) — the report shows a `...` marker when truncated.
+- **Clean break (confirmed):** old logs (combined `output`, stringly `name`)
+  no longer render their check/step output — regenerate reports from new runs.
+- **Rendering noise:** solved by the `--details` flag (confirmed) — the default
+  report stays compact; `--details` opts into the verbose view.
 
 ## 7. Code impact
 
@@ -139,18 +140,16 @@ to `<task>_checks`.
 | `internal/checks/checks.go` | emit structured file-check fields (`path`, `expectation`) and command fields (`command`, `exit_code`, separate `stdout`/`stderr`) |
 | `internal/task/install.go`, `uninstall.go` | pass separated streams to `CaseLogger.Step` |
 | `internal/logging/logging.go` | `Step`/`Check` take `stdout`/`stderr` (drop combined `output`); truncation per stream |
-| `internal/report/report.go` | parse new fields (with backward-compatible fallbacks) |
-| `internal/report/text.go` | per-case detail rendering for **all** cases: steps + grouped check sections (`install_checks` / `uninstall_checks` / ...) |
-| runner / CLI / config | **unchanged** |
+| `internal/report/report.go` | parse new fields only (clean break — no fallbacks) |
+| `internal/report/text.go` | `RenderText(w, details bool)`: default compact view (as today), `--details` view with steps + grouped check sections (`install_checks` / `uninstall_checks` / ...) for every case |
+| `cmd/installer-test/main.go` | `report` gains the **`--details`** flag |
+| runner / config | **unchanged** |
 
-## 8. Open questions (need your input)
+## 8. Confirmed decisions
 
-1. **Detail by default** — as proposed (every case, pass and fail), or keep the
-   one-liner default and add a `--details` flag (or the inverse `--summary`)?
-2. **Steps in the detail** — your example lists only checks; the proposal also
-   shows the executed steps (`copy` / `install` / `setup-install` / `uninstall`)
-   above the check section. Keep steps in, or checks only?
-3. **Truncation** — 2000 chars per stream (current) is fine, or a different
-   limit for stdout/stderr in events and the report?
-4. **Old logs** — support both field shapes in `report` (proposed), or clean
-   break: new fields only?
+| # | Question | Decision |
+|---|----------|----------|
+| 1 | Detail visibility | **`--details` flag** — default report stays compact; `--details` shows every case's full detail (pass and fail) |
+| 2 | Steps in the detail | **keep steps in** — `copy` / `install` / `setup-install` / `uninstall` rows above the check section |
+| 3 | Truncation | **2000 chars per stream** (stdout and stderr separately), `...` marker |
+| 4 | Old logs | **clean break** — new field shape only, no backward-compatible fallbacks |
