@@ -151,6 +151,7 @@ Same grouping, plus per-task detail. Changes vs today:
 | 6 | Per-env summary | `env total:` line removed; replaced by compact `checks: 29 passed, 1 failed` |
 | 7 | TOTAL footnote | **single line, cases only** (`TOTAL: 8 cases (7 passed, 1 failed)`) — separate checks line removed |
 | 8 | Container line in `--details` | **name only** — no `(id …)` suffix; the id stays in the logs |
+| 9 | Copy steps in counts | **excluded from case/env result counts** — copy is transport, not verification (a reporting defect: hidden passing copies inflated the totals, e.g. `1/2` with only failures visible). Copy failures still fail the case and are reported as a failure row |
 
 ### 6.2 The "no case_end" status label — explained and confirmed
 

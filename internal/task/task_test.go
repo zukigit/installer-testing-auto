@@ -37,43 +37,43 @@ func testInstaller() *config.ResolvedInstaller {
 	}
 }
 
-func TestFreshInstallCountsStepsWithoutChecks(t *testing.T) {
-	// no checks configured: copy + install must count as 2 passed
+func TestFreshInstallCountsInstallOnly(t *testing.T) {
+	// copy excluded from counts: install = 1 passed
 	res := FreshInstall{}.Run(context.Background(), &stubEnv{execCode: 0}, testInstaller(), testLogger())
-	if res.Passed != 2 || res.Failed != 0 {
-		t.Errorf("fresh-install = %+v, want Passed=2 Failed=0", res)
+	if res.Passed != 1 || res.Failed != 0 {
+		t.Errorf("fresh-install = %+v, want Passed=1 Failed=0", res)
 	}
 }
 
 func TestFreshInstallCountsFailedInstall(t *testing.T) {
-	// install fails: copy passed, install failed
+	// copy passed but uncounted; install failed
 	res := FreshInstall{}.Run(context.Background(), &stubEnv{execCode: 1}, testInstaller(), testLogger())
-	if res.Passed != 1 || res.Failed != 1 {
-		t.Errorf("fresh-install = %+v, want Passed=1 Failed=1", res)
+	if res.Passed != 0 || res.Failed != 1 {
+		t.Errorf("fresh-install = %+v, want Passed=0 Failed=1", res)
 	}
 }
 
-func TestUninstallCountsStepsWithoutChecks(t *testing.T) {
-	// no checks configured: copy + setup-install + uninstall = 3 passed
+func TestUninstallCountsUninstallOnly(t *testing.T) {
+	// copy excluded: setup-install + uninstall = 2 passed
 	res := Uninstall{}.Run(context.Background(), &stubEnv{execCode: 0}, testInstaller(), testLogger())
-	if res.Passed != 3 || res.Failed != 0 {
-		t.Errorf("uninstall = %+v, want Passed=3 Failed=0", res)
+	if res.Passed != 2 || res.Failed != 0 {
+		t.Errorf("uninstall = %+v, want Passed=2 Failed=0", res)
 	}
 }
 
 func TestUninstallFailsAtSetup(t *testing.T) {
 	res := Uninstall{}.Run(context.Background(), &stubEnv{execCode: 1}, testInstaller(), testLogger())
-	if res.Passed != 1 || res.Failed != 1 {
-		t.Errorf("uninstall = %+v, want Passed=1 (copy) Failed=1 (setup)", res)
+	if res.Passed != 0 || res.Failed != 1 {
+		t.Errorf("uninstall = %+v, want Passed=0 Failed=1 (setup failed)", res)
 	}
 }
 
 func TestUninstallWithOneCheck(t *testing.T) {
 	ri := testInstaller()
 	ri.UninstallChecks = &config.Checks{Commands: []config.CommandCheck{{Command: "rpm -q app"}}}
-	// copy + setup-install + uninstall + 1 check = 4 passed
+	// setup-install + uninstall + 1 check = 3 passed
 	res := Uninstall{}.Run(context.Background(), &stubEnv{execCode: 0}, ri, testLogger())
-	if res.Passed != 4 || res.Failed != 0 {
-		t.Errorf("uninstall = %+v, want Passed=4 Failed=0", res)
+	if res.Passed != 3 || res.Failed != 0 {
+		t.Errorf("uninstall = %+v, want Passed=3 Failed=0", res)
 	}
 }

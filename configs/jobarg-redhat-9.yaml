@@ -2,7 +2,7 @@
 environment:
   name: redhat-9
   type: docker
-  image: docker.io/zukidocker/solar:rhel9
+  image: docker.io/zukidocker/solar:debian11
 
 installers:
   - pattern: "bin/jobarranger-server*.rpm"

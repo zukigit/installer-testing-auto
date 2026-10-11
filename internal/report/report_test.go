@@ -16,16 +16,16 @@ const sampleNDJSON = `
 {"ts":"2026-10-09T12:00:01.000Z","level":"info","event":"step","env":"ubuntu-24.04","task":"fresh-install","installer":"a.rpm","data":{"kind":"install","command":"rpm -ivh /tmp/a.rpm","exit_code":0,"pass":true,"stdout":"install ok"}}
 {"ts":"2026-10-09T12:00:01.100Z","level":"info","event":"check","env":"ubuntu-24.04","task":"fresh-install","installer":"a.rpm","data":{"kind":"file","path":"/usr/bin/app","expectation":"must_exist","exit_code":0,"pass":true}}
 {"ts":"2026-10-09T12:00:01.200Z","level":"info","event":"check","env":"ubuntu-24.04","task":"fresh-install","installer":"a.rpm","data":{"kind":"command","command":"app --version","exit_code":0,"expected_exit_code":0,"pass":true,"stdout":"app 1.0"}}
-{"ts":"2026-10-09T12:00:01.500Z","level":"info","event":"case_end","env":"ubuntu-24.04","task":"fresh-install","installer":"a.rpm","data":{"container_id":"a1b2","pass":true,"passed":4,"failed":0,"duration_ms":1100}}
+{"ts":"2026-10-09T12:00:01.500Z","level":"info","event":"case_end","env":"ubuntu-24.04","task":"fresh-install","installer":"a.rpm","data":{"container_id":"a1b2","pass":true,"passed":3,"failed":0,"duration_ms":1100}}
 {"ts":"2026-10-09T12:00:02.000Z","level":"info","event":"case_start","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"container_id":"c3d4","container_name":"ita-ubuntu-24-04-a-rpm-uninstall"}}
 {"ts":"2026-10-09T12:00:02.100Z","level":"info","event":"step","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"kind":"copy","command":"bin/a.rpm -> /tmp/a.rpm","exit_code":0,"pass":true}}
 {"ts":"2026-10-09T12:00:02.200Z","level":"info","event":"step","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"kind":"setup-install","command":"rpm -ivh /tmp/a.rpm","exit_code":0,"pass":true}}
 {"ts":"2026-10-09T12:00:02.300Z","level":"info","event":"step","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"kind":"uninstall","command":"rpm -e app","exit_code":0,"pass":true,"stdout":"removed app"}}
 {"ts":"2026-10-09T12:00:02.400Z","level":"info","event":"check","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"kind":"file","path":"/usr/bin/app","expectation":"must_not_exist","exit_code":0,"pass":false,"detail":"file still exists"}}
-{"ts":"2026-10-09T12:00:02.600Z","level":"error","event":"case_end","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"container_id":"c3d4","pass":false,"passed":3,"failed":1,"duration_ms":600,"kept":true}}
+{"ts":"2026-10-09T12:00:02.600Z","level":"error","event":"case_end","env":"ubuntu-24.04","task":"uninstall","installer":"a.rpm","data":{"container_id":"c3d4","pass":false,"passed":2,"failed":1,"duration_ms":600,"kept":true}}
 {"ts":"2026-10-09T12:00:03.000Z","level":"info","event":"case_start","env":"ubuntu-24.04","task":"uninstall","installer":"b.rpm","data":{"container_id":"e5f6","container_name":"ita-ubuntu-24-04-b-rpm-uninstall"}}
-{"ts":"2026-10-09T12:00:03.500Z","level":"info","event":"env_end","env":"ubuntu-24.04","data":{"passed":7,"failed":1}}
-{"ts":"2026-10-09T12:00:03.500Z","level":"info","event":"run_end","data":{"passed":7,"failed":1,"config_errors":0}}
+{"ts":"2026-10-09T12:00:03.500Z","level":"info","event":"env_end","env":"ubuntu-24.04","data":{"passed":5,"failed":1}}
+{"ts":"2026-10-09T12:00:03.500Z","level":"info","event":"run_end","data":{"passed":5,"failed":1,"config_errors":0}}
 `
 
 func TestParseAndRenderCompact(t *testing.T) {
@@ -56,14 +56,13 @@ func TestParseAndRenderCompact(t *testing.T) {
 		"    uninstall",
 		// marks
 		"✓ PASS", "✗ FAIL", "? INCOMPLETE",
-		// counts
-		"4/4", "3/4",
+		// counts (copy excluded: install = 1, uninstall/setup = 2, + checks)
+		"3/3", "2/3",
 		// failure detail: failing check row + detail under the task line
 		"uninstall_checks:",
 		"/usr/bin/app", "must not exist",
 		"detail: file still exists",
-		// totals: compact per-env checks summary; TOTAL counts cases only
-		"\n  checks: 7 passed, 1 failed\n",
+		// totals: TOTAL is a single case-only line (no checks summary)
 		"TOTAL: 3 cases (1 passed, 1 failed, 1 incomplete)",
 		// kept containers section
 		"kept containers (--keep, failed cases):",
@@ -81,9 +80,11 @@ func TestParseAndRenderCompact(t *testing.T) {
 	if strings.Contains(out, "\n      install_checks:") {
 		t.Errorf("compact view should not render passing-case detail sections\nreport:\n%s", out)
 	}
-	// the TOTAL footnote must not have a separate checks line
-	if strings.Contains(out, ")\nchecks:") {
-		t.Errorf("TOTAL footnote should be a single case-only line\nreport:\n%s", out)
+	// the TOTAL footnote must not have a separate checks line, and per-env
+	// checks summaries are removed too (v2.4) — only check *sections*
+	// ("install_checks:" / "uninstall_checks:") may contain the word
+	if strings.Contains(out, "\n  checks:") {
+		t.Errorf("report should not contain any checks summary line\nreport:\n%s", out)
 	}
 }
 

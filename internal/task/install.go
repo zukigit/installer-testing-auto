@@ -19,21 +19,20 @@ func init() { register(FreshInstall{}) }
 func (FreshInstall) Name() string { return FreshInstallName }
 
 func (t FreshInstall) Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, cl *logging.CaseLogger) Result {
-	var passed int
 	copyCmd := fmt.Sprintf("%s -> %s", ri.LocalPath, ri.ContainerPath)
 	if err := e.Copy(ctx, ri.LocalPath, ri.ContainerPath); err != nil {
 		cl.Step("copy", copyCmd, -1, false, "", err.Error())
 		return Result{Failed: 1}
 	}
 	cl.Step("copy", copyCmd, 0, true, "", "")
-	passed++ // copy step
+	// copy is transport, not verification — excluded from result counts
 	if ri.InstallCmd == "" {
 		cl.Step("install", "", -1, false, "",
 			fmt.Sprintf("no install command for %s: set install_command in the config", ri.Basename))
-		return Result{Passed: passed, Failed: 1}
+		return Result{Failed: 1}
 	}
 	p, f := runPhase(ctx, e, cl, ri, ri.InstallCmd, "install", ri.InstallChecks)
-	return Result{Passed: passed + p, Failed: f}
+	return Result{Passed: p, Failed: f}
 }
 
 // copyInstaller was superseded by inline copy steps (separate streams);

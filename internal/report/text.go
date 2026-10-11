@@ -196,9 +196,6 @@ func (r *Run) RenderText(w io.Writer, details bool) {
 			}
 			fmt.Fprintln(w)
 		}
-		if e.passed > 0 || e.failed > 0 || e.sawEnd {
-			fmt.Fprintf(w, "  checks: %d passed, %d failed\n", e.passed, e.failed)
-		}
 		fmt.Fprintln(w)
 	}
 
