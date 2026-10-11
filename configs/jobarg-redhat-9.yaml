@@ -45,5 +45,9 @@ installers:
         "/var/log/jobarranger",
         "/usr/share/jobarranger"
       ]
+    upgrade_command: "echo new >> /etc/jobarranger/web/jam.config.php && rpm -Uvh {installer}"
+    upgrade_checks:
+      must_exist:
+        - /etc/jobarranger/web/jam.config.php.rpmnew
 
   - pattern: "bin/jobarranger-utils*.rpm"
