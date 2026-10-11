@@ -1,0 +1,53 @@
+# One config file = one target environment.
+environment:
+  name: amazon-2023
+  type: docker
+  image: docker.io/zukidocker/solar:amzn2023
+
+installers:
+  - pattern: "bin/jobarranger-server*amzn2023*.rpm"
+    install_checks:
+      must_exist: [
+        "/usr/share/doc/jobarranger-server/database",
+      ]
+    uninstall_checks:
+      must_not_exist: [
+        "/usr/share/doc/jobarranger-server/database",
+        "/var/log/jobarranger",
+        "/etc/jobarranger/jobarg_server.conf",
+        "/var/lib/jobarranger/server"
+      ]
+    upgrade_command: "echo new >> /etc/jobarranger/jobarg_server.conf && rpm -Uvh {installer}"
+    upgrade_checks:
+      must_exist:
+        - /etc/jobarranger/jobarg_server.conf.rpmnew
+
+  - pattern: "bin/jobarranger-agentd*amzn2023*.rpm"
+    uninstall_checks:
+      must_not_exist: [
+        "/var/log/jobarranger",
+        "/etc/jobarranger/jobarg_agentd.conf",
+        "/var/lib/jobarranger/agent"
+      ]
+    upgrade_command: "echo new >> /etc/jobarranger/jobarg_agentd.conf && rpm -Uvh {installer}"
+    upgrade_checks:
+      must_exist:
+        - /etc/jobarranger/jobarg_agentd.conf.rpmnew
+
+  - pattern: "bin/jobarranger-manager*amzn2023*.rpm"
+    install_checks:
+      must_exist: [
+        "/usr/share/jobarranger/modules/Module.php",
+        "/usr/lib/systemd/system/jam-cleanup.service"
+      ]
+    uninstall_checks:
+      must_not_exist: [
+        "/var/log/jobarranger",
+        "/usr/share/jobarranger"
+      ]
+    upgrade_command: "echo new >> /etc/jobarranger/web/jam.config.php && rpm -Uvh {installer}"
+    upgrade_checks:
+      must_exist:
+        - /etc/jobarranger/web/jam.config.php.rpmnew
+
+  - pattern: "bin/jobarranger-utils*amzn2023*.rpm"
