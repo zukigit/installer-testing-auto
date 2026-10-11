@@ -51,7 +51,7 @@ go build -mod=vendor -o installer-test-exec github.com/zukigit/installer-testing
 
 # generate a text report from the captured logs
 ./installer-test-exec report --from run.jsonl
-./installer-test-exec report --details --from run.jsonl   # steps + install_checks/uninstall_checks sections for every case
+./installer-test-exec report --details --from run.jsonl   # steps + install_checks/uninstall_checks/upgrade_checks sections for every case
 ./installer-test-exec report --from - < run.jsonl      # from stdin
 
 ```
@@ -97,8 +97,8 @@ installers:
 ## Configuration reference
 
 One config file = one target environment. An installer **pattern** resolves to
-the **package list**: both `install_command` and `uninstall_command` run once
-per matched file.
+the **package list**: `install_command`, `uninstall_command` and `upgrade_command`
+run once per matched file.
 
 ### `environment` (required)
 
@@ -116,10 +116,29 @@ per matched file.
 | `pattern`          | **required** | Glob relative to the repo root (e.g. `bin/*.deb`). Must match at least one file, or the run fails. |
 | `install_command`  | optional | Install command template. Defaults by file extension (table below). |
 | `uninstall_command`| optional | Uninstall command template. Defaults by file extension — **`.sh` has no default, so it must be set explicitly for scripts**. |
+| `upgrade_command`  | optional | Upgrade command template for the `upgrade` task, defaults by file extension (table below) — **`.sh` has no default**. Used to upgrade from an **older version of the same package** (pairing rules below). |
 | `install_checks`   | optional | Check block run after each installer's install command. All sub-keys optional. |
 | `uninstall_checks` | optional | Check block run after each installer's uninstall command. All sub-keys optional. |
+| `upgrade_checks`   | optional | Check block run after the upgrade command in `upgrade` cases. Same shape as the other check blocks. |
 
-### `install_checks` / `uninstall_checks` (all sub-keys optional)
+### Upgrade pairing
+
+The `upgrade` task needs installer file names carrying versions:
+**`MAJOR.MINOR.PATCH[-suffix]`** (`.deb`: `name_VERSION_arch.deb`,
+`.rpm`: `name-VERSION-release[.arch].rpm`).
+
+- For each installer, the tool finds every **older** version of the same
+  package from the config's full resolved list and creates one upgrade case
+  per pair: install the old version (setup) → run `upgrade_command` →
+  run `upgrade_checks`.
+- Version ordering: MAJOR.MINOR.PATCH compared numerically; then the suffix —
+  numeric suffixes compared numerically (`0.1.1-1` < `0.1.1-2`), non-numeric
+  suffixes (`-beta`, `-1.el9`) compared by the files' modification dates.
+- Installers **without an older version** or with a **non-parsable version**
+  are `⏸ SKIPPED` in the report (never failures).
+- Full pairing rules: `docs/upgrade-task-plan.md`.
+
+### `install_checks` / `uninstall_checks` / `upgrade_checks` (all sub-keys optional)
 
 | Key              | Required? | Description |
 |------------------|-----------|-------------|
@@ -145,12 +164,12 @@ per matched file.
 
 ### Default commands by extension
 
-| Extension | `install_command` default | `uninstall_command` default |
-|-----------|---------------------------|-----------------------------|
-| `.deb`    | `dpkg -i {installer}`     | `dpkg -r {package}`         |
-| `.rpm`    | `rpm -ivh {installer}`    | `rpm -e {package}`          |
-| `.sh`     | `sh {installer}`          | *(none — must be set in config)* |
-| other     | *(none — must be set in config)* | *(none — must be set in config)* |
+| Extension | `install_command` default | `uninstall_command` default | `upgrade_command` default |
+|-----------|---------------------------|-----------------------------|---------------------------|
+| `.deb`    | `dpkg -i {installer}`     | `dpkg -r {package}`         | `dpkg -i {installer}`     |
+| `.rpm`    | `rpm -ivh {installer}`    | `rpm -e {package}`          | `rpm -Uvh {installer}`    |
+| `.sh`     | `sh {installer}`          | *(none — must be set in config)* | *(none — must be set in config)* |
+| other     | *(none — must be set in config)* | *(none — must be set in config)* | *(none — must be set in config)* |
 
 `{package}` derivation: `.deb` strips the `_version_arch.deb` suffix
 (`myapp_1.2.3_amd64.deb` → `myapp`); `.rpm` strips version, release and arch
