@@ -31,32 +31,46 @@ for the full design.
 ## Usage
 
 ```sh
-# build (binary is a build artifact — do not commit it)
-go build -o installer-test ./cmd/installer-test
+# build
+go build -mod=vendor -o installer-test-exec github.com/zukigit/installer-testing-auto/cmd/installer-test
 
 # dry-run: show envs, matched installers, resolved commands
-./installer-test list
+./installer-test-exec list
 
 # run all tasks on all environments (live JSON logs), max 5 containers at once
-./installer-test run | tee run.jsonl
+./installer-test-exec run | tee run.jsonl
 
 # install cases only, 8 containers max
-./installer-test run --task fresh-install --parallel 8 | tee run.jsonl
+./installer-test-exec run --task fresh-install --parallel 8 | tee run.jsonl
 
 # one environment + installer filter
-./installer-test run --config configs/rocky-9.yaml --installer "bin/*.rpm" | tee run.jsonl
+./installer-test-exec run --config configs/rocky-9.yaml --installer "bin/*.rpm" | tee run.jsonl
 
 # keep containers of failed cases for debugging (container IDs are always logged)
-./installer-test run --keep | tee run.jsonl
+./installer-test-exec run --keep | tee run.jsonl
 
 # generate a text report from the captured logs
-./installer-test report --from run.jsonl
-./installer-test report --details --from run.jsonl   # steps + install_checks/uninstall_checks sections for every case
-./installer-test report --from - < run.jsonl      # from stdin
+./installer-test-exec report --from run.jsonl
+./installer-test-exec report --details --from run.jsonl   # steps + install_checks/uninstall_checks sections for every case
+./installer-test-exec report --from - < run.jsonl      # from stdin
 
-# remove the binary when done (build artifact hygiene)
-rm installer-test
 ```
+
+## Example reports
+
+A report generated from `run.jsonl` with `./installer-test-exec report --from run.jsonl`
+(compact view, grouped by installer — PASS/FAIL with check counts and durations,
+failure details inline):
+
+![Report summary](screenshots/report_summary.png)
+
+The same logs with `./installer-test-exec report --details --from run.jsonl`
+additionally shows, for every case, the container, the executed steps and the
+`install_checks:` / `uninstall_checks:` (and `upgrade_checks:`) sections with
+what was checked — paths, `must exist`/`must not exist` expectations, command
+exit codes and stdout/stderr:
+
+![Report details](screenshots/report_detail.png)
 
 > Running `run` requires a Docker daemon; the devcontainer has none, so use a
 > Docker-enabled host or mount the Docker socket.
