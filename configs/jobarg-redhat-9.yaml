@@ -1,0 +1,36 @@
+# One config file = one target environment.
+environment:
+  name: redhat-9
+  type: docker
+  image: docker.io/zukidocker/solar:rhel9
+
+installers:
+  - pattern: "bin/jobarranger-server*.rpm"
+    install_checks:
+      must_exist: [
+        "/usr/share/doc/jobarranger-server/database",
+      ]
+    uninstall_checks:
+      must_not_exist: [
+        "/usr/share/doc/jobarranger-server/database",
+        "/var/log/jobarranger",
+        "/etc/jobarranger/jobarg_server.conf",
+        "/var/lib/jobarranger/server"
+      ]
+
+  - pattern: "bin/jobarranger-agentd*.rpm"
+    install_checks:
+      must_exist: [
+        "/usr/share/doc/jobarranger-server/database",
+      ]
+    uninstall_checks:
+      must_not_exist: [
+        "/usr/share/doc/jobarranger-server/database",
+        "/var/log/jobarranger",
+        "/etc/jobarranger/jobarg_server.conf",
+        "/var/lib/jobarranger/server"
+      ]
+
+  - pattern: "bin/jobarranger-manager*.rpm"
+
+  - pattern: "bin/jobarranger-utils*.rpm"
