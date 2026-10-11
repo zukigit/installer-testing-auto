@@ -17,6 +17,10 @@ installers:
         "/etc/jobarranger/jobarg_server.conf",
         "/var/lib/jobarranger/server"
       ]
+    upgrade_command: "echo new >> /etc/jobarranger/jobarg_server.conf && rpm -Uvh {installer}"
+    upgrade_checks:
+      must_exist:
+        - /etc/jobarranger/jobarg_server.conf.rpmnew
 
   - pattern: "bin/jobarranger-agentd*.rpm"
     uninstall_checks:
@@ -25,6 +29,10 @@ installers:
         "/etc/jobarranger/jobarg_agentd.conf",
         "/var/lib/jobarranger/agent"
       ]
+    upgrade_command: "echo new >> /etc/jobarranger/jobarg_agentd.conf && rpm -Uvh {installer}"
+    upgrade_checks:
+      must_exist:
+        - /etc/jobarranger/jobarg_agentd.conf.rpmnew
 
   - pattern: "bin/jobarranger-manager*.rpm"
     install_checks:
