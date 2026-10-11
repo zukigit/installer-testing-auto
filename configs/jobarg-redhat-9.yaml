@@ -5,7 +5,7 @@ environment:
   image: docker.io/zukidocker/solar:rhel9
 
 installers:
-  - pattern: "bin/jobarranger-server*.rpm"
+  - pattern: "bin/jobarranger-server*el9*.rpm"
     install_checks:
       must_exist: [
         "/usr/share/doc/jobarranger-server/database",
