@@ -76,18 +76,7 @@ func durationText(c *caseRec) string {
 	return fmt.Sprintf("%.1fs", c.durationMs/1000)
 }
 
-// taskLineSuffix appends the upgrade source / skip reason to a task line.
-func taskLineSuffix(c *caseRec) string {
-	switch {
-	case c.skipped:
-		return fmt.Sprintf("  (%s)", skipReasonText(c.skipReason))
-	case c.fromInstaller != "":
-		return fmt.Sprintf("  (from %s)", c.fromInstaller)
-	default:
-		return ""
-	}
-}
-
+// ---------- rendering ----------
 // skipReasonText humanizes the case_skipped reason.
 func skipReasonText(reason string) string {
 	switch reason {
@@ -212,6 +201,8 @@ func (r *Run) RenderText(w io.Writer, details bool) {
 					skippedCases++
 					if details {
 						r.printTaskDetail(w, c, p, lay)
+					} else {
+						r.printCaseMeta(w, c)
 					}
 				case !c.ended:
 					incomplete++
@@ -231,6 +222,9 @@ func (r *Run) RenderText(w io.Writer, details bool) {
 					passedCases++
 					if details {
 						r.printTaskDetail(w, c, p, lay)
+					} else if c.fromInstaller != "" {
+						// upgrade pairs: keep the `from:` key line in the compact view
+						r.printCaseMeta(w, c)
 					}
 				}
 			}
@@ -269,22 +263,39 @@ func (r *Run) printTaskLine(w io.Writer, c *caseRec, p palette, lay *reportLayou
 	statusCell := p.colorize(statusColor(c), padDisplay(statusText(c), lay.statusW))
 	counts := padDisplay(countsText(c), lay.countsW)
 	dur := padLeft(durationText(c), lay.durW)
-	fmt.Fprintf(w, "    %s   %s   %s   %s%s\n", taskCell, statusCell, counts, dur, taskLineSuffix(c))
+	// no trailing annotation — skip reasons / upgrade sources render as
+	// structured `reason:` / `from:` key lines under the task line
+	fmt.Fprintf(w, "    %s   %s   %s   %s\n", taskCell, statusCell, counts, dur)
+}
+
+// printCaseMeta renders the per-case key lines that sit directly under the
+// task line: `reason:` for skipped cases and `from:` for upgrade cases.
+func (r *Run) printCaseMeta(w io.Writer, c *caseRec) {
+	if c.skipped {
+		fmt.Fprintf(w, "      reason: %s\n", skipReasonText(c.skipReason))
+		return
+	}
+	if c.fromInstaller != "" {
+		fmt.Fprintf(w, "      from: %s\n", c.fromInstaller)
+	}
 }
 
 // printTaskDetail renders the full detail of one task (--details view):
 // container, steps (passing copies hidden), and all check rows.
 func (r *Run) printTaskDetail(w io.Writer, c *caseRec, p palette, lay *reportLayout) {
 	if c.skipped {
-		fmt.Fprintf(w, "      skipped: %s\n", skipReasonText(c.skipReason))
+		fmt.Fprintf(w, "      reason: %s\n", skipReasonText(c.skipReason))
 		return
+	}
+	if c.fromInstaller != "" {
+		fmt.Fprintf(w, "      from: %s\n", c.fromInstaller)
 	}
 	if c.containerName != "" {
 		// name only — the id stays available in the logs (case_start/case_end)
 		fmt.Fprintf(w, "      container: %s\n", c.containerName)
 	}
 	if !c.ended {
-		fmt.Fprintf(w, "      (case interrupted — no steps/check results recorded yet)\n")
+		fmt.Fprintf(w, "      case interrupted — no steps/check results recorded yet\n")
 		return
 	}
 	visible := visibleSteps(c, false)
@@ -304,8 +315,10 @@ func (r *Run) printTaskDetail(w io.Writer, c *caseRec, p palette, lay *reportLay
 // printFailureDetail shows only the failures of one case (compact view)
 // — failed steps plus the check rows that failed.
 func (r *Run) printFailureDetail(w io.Writer, c *caseRec, p palette, lay *reportLayout) {
+	// upgrade pairs: the `from:` key line renders in the compact view too
+	r.printCaseMeta(w, c)
 	if !c.ended {
-		fmt.Fprintf(w, "      (case interrupted — no steps/check results recorded yet)\n")
+		fmt.Fprintf(w, "      case interrupted — no steps/check results recorded yet\n")
 		return
 	}
 	var failedSteps []stepRec
@@ -358,11 +371,9 @@ func (r *Run) printStep(w io.Writer, s stepRec, p palette) {
 	if !s.pass {
 		mark = p.colorize(ansiRed, "✗ FAIL") + "  "
 	}
-	line := fmt.Sprintf("      %s%s: %s", mark, s.kind, s.command)
-	if s.exitCode >= 0 {
-		line += fmt.Sprintf(" (exit %d)", s.exitCode)
-	}
-	fmt.Fprintln(w, line)
+	fmt.Fprintf(w, "      %s%s: %s\n", mark, s.kind, s.command)
+	// exit code is a key line for every step, including 0
+	fmt.Fprintf(w, "            exit code: %d\n", s.exitCode)
 	if !s.pass {
 		printStream(w, "stdout", s.stdout, false)
 		printStream(w, "stderr", s.stderr, false)
@@ -400,7 +411,7 @@ func printStream(w io.Writer, name, value string, showEmpty bool) {
 		return
 	}
 	if value == "" {
-		fmt.Fprintf(w, "            %s: (empty)\n", name)
+		fmt.Fprintf(w, "            %s: empty\n", name)
 		return
 	}
 	for _, l := range strings.Split(strings.TrimRight(value, "\n"), "\n") {

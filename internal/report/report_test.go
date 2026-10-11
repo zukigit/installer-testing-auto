@@ -100,14 +100,17 @@ func TestRenderDetailsView(t *testing.T) {
 		// container names are shown in the details view (name only, no id)
 		"container: ita-ubuntu-24-04-a-rpm-fresh-install",
 		// steps: passing copy steps hidden, full paths kept
-		"install: rpm -ivh /tmp/a.rpm (exit 0)",
+		"install: rpm -ivh /tmp/a.rpm",
+		"exit code: 0",
+		"stdout: app 1.0",
+		"stderr: empty",
 		"install_checks:",
 		"must exist", "app --version", "exit code 0",
-		"stdout: app 1.0", "stderr: (empty)",
-		"setup-install: rpm -ivh /tmp/a.rpm (exit 0)",
-		"uninstall: rpm -e app (exit 0)",
+
+		"setup-install: rpm -ivh /tmp/a.rpm",
+		"uninstall: rpm -e app",
 		"detail: file still exists",
-		"(case interrupted — no steps/check results recorded yet)",
+		"case interrupted — no steps/check results recorded yet",
 	}
 	for _, want := range wantStrings {
 		if !strings.Contains(out, want) {
@@ -163,15 +166,19 @@ func TestParseAndRenderUpgrade(t *testing.T) {
 	for _, want := range []string{
 		"  myapp-0.1.1-1.rpm",
 		"⏸ SKIPPED",
-		"(no older version)",
+		"reason: no older version",
 		"  myapp-0.1.2-1.rpm",
 		"✓ PASS", "3/3",
-		"(from myapp-0.1.1-1.rpm)",
+		"from: myapp-0.1.1-1.rpm",
 		"TOTAL: 2 cases (1 passed, 0 failed, 1 skipped)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("upgrade compact report missing %q\nreport:\n%s", want, out)
 		}
+	}
+	// no parenthesized annotations may appear (TOTAL keeps its parens)
+	if strings.Contains(out, "(no older version)") || strings.Contains(out, "(from ") || strings.Contains(out, "(exit ") {
+		t.Errorf("compact report still contains a parenthesized annotation\nreport:\n%s", out)
 	}
 
 	var db strings.Builder
@@ -179,10 +186,11 @@ func TestParseAndRenderUpgrade(t *testing.T) {
 	down := db.String()
 	for _, want := range []string{
 		"container: ita-redhat-9-myapp-0-1-2-1-rpm-from-0-1-1-1-upgrade",
-		"setup-install: rpm -ivh /tmp/myapp-0.1.1-1.rpm (exit 0)",
-		"upgrade: rpm -Uvh /tmp/myapp-0.1.2-1.rpm (exit 0)",
+		"setup-install: rpm -ivh /tmp/myapp-0.1.1-1.rpm",
+		"upgrade: rpm -Uvh /tmp/myapp-0.1.2-1.rpm",
+		"exit code: 0",
 		"upgrade_checks:",
-		"skipped: no older version",
+		"reason: no older version",
 	} {
 		if !strings.Contains(down, want) {
 			t.Errorf("--details upgrade report missing %q\nreport:\n%s", want, down)
