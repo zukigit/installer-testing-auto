@@ -19,18 +19,23 @@ installers:
       ]
 
   - pattern: "bin/jobarranger-agentd*.rpm"
-    install_checks:
-      must_exist: [
-        "/usr/share/doc/jobarranger-server/database",
-      ]
     uninstall_checks:
       must_not_exist: [
-        "/usr/share/doc/jobarranger-server/database",
         "/var/log/jobarranger",
-        "/etc/jobarranger/jobarg_server.conf",
-        "/var/lib/jobarranger/server"
+        "/etc/jobarranger/jobarg_agentd.conf",
+        "/var/lib/jobarranger/agent"
       ]
 
   - pattern: "bin/jobarranger-manager*.rpm"
+    install_checks:
+      must_exist: [
+        "/usr/share/jobarranger/modules/Module.php",
+        "/usr/lib/systemd/system/jam-cleanup.service"
+      ]
+    uninstall_checks:
+      must_not_exist: [
+        "/var/log/jobarranger",
+        "/usr/share/jobarranger"
+      ]
 
   - pattern: "bin/jobarranger-utils*.rpm"
