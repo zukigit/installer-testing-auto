@@ -31,7 +31,7 @@ installers:
         "/etc/jobarranger/jobarg_agentd.conf",
         "/var/lib/jobarranger/agent"
       ]
-    upgrade_command: "echo new >> /etc/jobarranger/jobarg_agentd.conf && dpkg -i{installer}"
+    upgrade_command: "echo new >> /etc/jobarranger/jobarg_agentd.conf && dpkg -i {installer}"
     upgrade_checks:
       must_exist:
         - /etc/jobarranger/jobarg_agentd.conf.new
@@ -47,7 +47,7 @@ installers:
         "/var/log/jobarranger",
         "/usr/share/jobarranger"
       ]
-    upgrade_command: "echo new >> /etc/jobarranger/web/jam.config.php && dpkg -i{installer}"
+    upgrade_command: "echo new >> /etc/jobarranger/web/jam.config.php && dpkg -i {installer}"
     upgrade_checks:
       must_exist:
         - /etc/jobarranger/web/jam.config.php.new
