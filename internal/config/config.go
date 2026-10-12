@@ -3,13 +3,10 @@
 package config
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -48,6 +45,7 @@ type Checks struct {
 // plus optional command overrides and per-phase checks.
 type InstallerSpec struct {
 	Pattern          string  `yaml:"pattern"`
+	UsePreset        string  `yaml:"use_preset"` // preset name in the config's presets file
 	InstallCommand   string  `yaml:"install_command"`
 	UninstallCommand string  `yaml:"uninstall_command"`
 	UpgradeCommand   string  `yaml:"upgrade_command"`
@@ -58,6 +56,7 @@ type InstallerSpec struct {
 
 // Config is the top level of one YAML config file.
 type Config struct {
+	Presets     string          `yaml:"presets"` // presets file; "" -> DefaultPresetsPath
 	Environment EnvironmentSpec `yaml:"environment"`
 	Installers  []InstallerSpec `yaml:"installers"`
 }
@@ -68,13 +67,14 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true) // reject unknown fields (typo protection)
 	cfg := &Config{}
-	if err := dec.Decode(cfg); err != nil {
+	if err := NewStrictDecoder(data).Decode(cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config %s: %w", path, err)
+	}
+	if err := cfg.applyPresets(); err != nil {
 		return nil, fmt.Errorf("invalid config %s: %w", path, err)
 	}
 	return cfg, nil
@@ -109,8 +109,22 @@ func Discover(pattern string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bad config pattern %q: %w", pattern, err)
 	}
-	if len(matches) == 0 {
+	// Presets files under configs/shared/ are never environments, even when a
+	// custom glob (e.g. configs/**/*.yaml) reaches into that directory.
+	var kept []string
+	for _, m := range matches {
+		if !isSharedPresetsFile(m) {
+			kept = append(kept, m)
+		}
+	}
+	if len(kept) == 0 {
 		return nil, fmt.Errorf("no config files matched %q", pattern)
 	}
-	return matches, nil
+	return kept, nil
+}
+
+// isSharedPresetsFile reports whether path sits in the shared presets
+// directory (configs/shared/), which Discover treats as never-environments.
+func isSharedPresetsFile(path string) bool {
+	return strings.HasPrefix(filepath.ToSlash(filepath.Clean(path)), "configs/shared/")
 }

@@ -1,8 +1,8 @@
 # Shared Presets Plan (v3.1) — `use_preset` and `configs/shared/presets.yaml`
 
-> Status: **PROPOSED — awaiting final go-ahead** (core decisions confirmed by
-> the user: presets carry every installer key, `use_preset` naming, multiple
-> presets files with per-config selection, **no** environment-level key)
+> Status: **IMPLEMENTED** (confirmed decisions: presets carry every installer
+> key, `use_preset` naming, multiple presets files with per-config selection,
+> **no** environment-level key; all 13 jobarg configs migrated to presets)
 > Baseline: the implemented v3 design (see `docs/upgrade-task-plan.md`,
 > `docs/container-per-task-plan.md`). Scope: **config loading only** — no event
 > schema, runner, task, report or CLI changes; presets are applied inside

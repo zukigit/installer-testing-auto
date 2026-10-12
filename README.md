@@ -25,7 +25,9 @@ Automation tool to test installer files on target environments using
 5. Build a report afterwards from the captured logs with the `report` subcommand.
 
 See `docs/installer-testing-tool-plan.md` (v1 baseline),
-`docs/container-per-task-plan.md` (v2 design) and `docs/upgrade-task-plan.md`
+`docs/container-per-task-plan.md` (v2 design),
+`docs/upgrade-task-plan.md` (v3 upgrade task) and
+`docs/shared-checks-presets-plan.md` (v3.1 shared presets)
 for the full design.
 
 ## Usage
@@ -114,6 +116,7 @@ run once per matched file.
 | Key                | Required? | Description |
 |--------------------|-----------|-------------|
 | `pattern`          | **required** | Glob relative to the repo root (e.g. `bin/*.deb`). Must match at least one file, or the run fails. |
+| `use_preset`       | optional | Name of a preset defined in the config's presets file (see [Shared presets](#shared-presets-configssharedpresetsyaml)). A preset may carry any installer key except `pattern`; a locally defined key beats the preset. |
 | `install_command`  | optional | Install command template. Defaults by file extension (table below). |
 | `uninstall_command`| optional | Uninstall command template. Defaults by file extension — **`.sh` has no default, so it must be set explicitly for scripts**. |
 | `upgrade_command`  | optional | Upgrade command template for the `upgrade` task, defaults by file extension (table below) — **`.sh` has no default**. Used to upgrade from an **older version of the same package** (pairing rules below). |
@@ -153,6 +156,51 @@ The `upgrade` task needs installer file names carrying versions:
 | `command`                  | **required** | Shell command run inside the environment (via `sh -c`). |
 | `expected_exit_code`       | optional  | Expected exit code. Default: `0`. |
 | `expected_stdout_contains` | optional  | Substring the command's output must contain. |
+
+### Shared presets (`configs/shared/presets.yaml`)
+
+The 13 environment configs share their per-package checks and commands.
+A **preset** = the same keys as an installer entry minus `pattern`:
+`install_command`, `uninstall_command`, `upgrade_command`, `install_checks`,
+`uninstall_checks`, `upgrade_checks` — each optional, any combination.
+
+```yaml
+# configs/shared/presets.yaml
+presets:
+  server-rpm:
+    install_checks:
+      must_exist: ["/usr/share/doc/jobarranger-server/database"]
+    uninstall_checks:
+      must_not_exist: ["/var/log/jobarranger", "/etc/jobarranger/jobarg_server.conf"]
+    upgrade_command: "echo new >> /etc/jobarranger/jobarg_server.conf && rpm -Uvh {installer}"
+    upgrade_checks:
+      must_exist: ["/etc/jobarranger/jobarg_server.conf.rpmnew"]
+```
+
+Each environment config names **one** presets file and references presets per
+installer entry (paths are cwd-relative, like installer patterns):
+
+```yaml
+presets: configs/shared/presets.yaml   # optional; default: configs/shared/presets.yaml
+
+installers:
+  - pattern: "bin/jobarranger-server*el8*.rpm"
+    use_preset: server-rpm
+```
+
+Merge rules — **per key, local wins**:
+
+- A locally defined command/check block replaces the preset's entirely
+  (no list unioning — no silent duplicates).
+- Commands fall back: entry > preset > extension defaults table below.
+- Exactly one preset per entry; no chaining or multiple presets.
+- Unknown preset names, missing presets files (when used, or explicitly
+  named but unused) and malformed presets files are config-load errors.
+
+Presets files live under `configs/shared/`, which is **never treated as
+environment configs** — even custom `--config` globs (e.g.
+`configs/**/*.yaml`) skip that directory, so you can keep several presets
+files side by side (e.g. per product).
 
 ### Command placeholders
 

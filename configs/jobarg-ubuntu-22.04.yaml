@@ -1,4 +1,7 @@
 # One config file = one target environment.
+# Per-entry checks/commands come from the presets file below.
+presets: configs/shared/presets.yaml
+
 environment:
   name: ubuntu-22.0.4
   type: docker
@@ -6,50 +9,12 @@ environment:
 
 installers:
   - pattern: "bin/jobarranger-server*ubuntu22.04*.deb"
-    install_checks:
-      must_exist: [
-        "/usr/share/doc/jobarranger-server/database",
-      ]
-    uninstall_command: "apt-get purge -y {package}"
-    uninstall_checks:
-      must_not_exist: [
-        "/usr/share/doc/jobarranger-server/database",
-        "/var/log/jobarranger",
-        "/etc/jobarranger/jobarg_server.conf",
-        "/var/lib/jobarranger/server"
-      ]
-    upgrade_command: "echo new >> /etc/jobarranger/jobarg_server.conf && dpkg -i {installer}"
-    upgrade_checks:
-      must_exist:
-        - /etc/jobarranger/jobarg_server.conf.new
+    use_preset: server-deb
 
   - pattern: "bin/jobarranger-agentd*ubuntu22.04*.deb"
-    uninstall_command: "apt-get purge -y {package}"
-    uninstall_checks:
-      must_not_exist: [
-        "/var/log/jobarranger",
-        "/etc/jobarranger/jobarg_agentd.conf",
-        "/var/lib/jobarranger/agent"
-      ]
-    upgrade_command: "echo new >> /etc/jobarranger/jobarg_agentd.conf && dpkg -i {installer}"
-    upgrade_checks:
-      must_exist:
-        - /etc/jobarranger/jobarg_agentd.conf.new
+    use_preset: agentd-deb
 
   - pattern: "bin/jobarranger-manager*ubuntu22.04*.deb"
-    install_checks:
-      must_exist: [
-        "/usr/share/jobarranger/modules/Module.php",
-        "/usr/lib/systemd/system/jam-cleanup.service"
-      ]
-    uninstall_checks:
-      must_not_exist: [
-        "/var/log/jobarranger",
-        "/usr/share/jobarranger"
-      ]
-    upgrade_command: "echo new >> /etc/jobarranger/web/jam.config.php && dpkg -i {installer}"
-    upgrade_checks:
-      must_exist:
-        - /etc/jobarranger/web/jam.config.php.new
+    use_preset: manager-deb
 
   - pattern: "bin/jobarranger-utils*ubuntu22.04*.deb"
