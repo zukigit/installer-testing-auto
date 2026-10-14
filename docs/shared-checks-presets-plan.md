@@ -21,7 +21,7 @@ installer entry:
 ```yaml
 presets: configs/shared/presets.yaml    # which presets file this config uses
 installers:
-  - pattern: "bin/jobarranger-server*el8*.rpm"
+  - pattern: "bin/jobarranger-server-{VERSION}*el8*.rpm"
     use_preset: server-rpm              # <- new key
 ```
 
@@ -115,7 +115,7 @@ presets: configs/shared/presets.yaml   # NEW, optional — which presets file
                                       # default: configs/shared/presets.yaml
 
 installers:
-  - pattern: "bin/jobarranger-server*el8*.rpm"
+  - pattern: "bin/jobarranger-server-{VERSION}*el8*.rpm"
     use_preset: server-rpm             # NEW, optional — preset name
     install_command:   "..."           # existing — local override beats the preset
     uninstall_command: "..."          # existing — local override beats the preset
@@ -160,7 +160,7 @@ Worked example — local `upgrade_checks` on top of a preset:
 ```yaml
 presets: configs/shared/presets.yaml
 installers:
-  - pattern: "bin/jobarranger-server*ubuntu22.04*.deb"
+  - pattern: "bin/jobarranger-server-{VERSION}*ubuntu22.04*.deb"
     use_preset: server-deb
     upgrade_checks:                   # local -> replaces the preset's upgrade block
       must_exist:
@@ -212,7 +212,7 @@ this safeguard.)
 Before (`configs/jobarg-almalinux-8.yaml`, server entry — 14 lines):
 
 ```yaml
-- pattern: "bin/jobarranger-server*el8*.rpm"
+- pattern: "bin/jobarranger-server-{VERSION}*el8*.rpm"
   install_checks:
     must_exist: ["/usr/share/doc/jobarranger-server/database"]
   uninstall_checks:
@@ -230,7 +230,7 @@ Before (`configs/jobarg-almalinux-8.yaml`, server entry — 14 lines):
 After (with §2's presets file — **2 lines** per entry):
 
 ```yaml
-- pattern: "bin/jobarranger-server*el8*.rpm"
+- pattern: "bin/jobarranger-server-{VERSION}*el8*.rpm"
   use_preset: server-rpm
 ```
 

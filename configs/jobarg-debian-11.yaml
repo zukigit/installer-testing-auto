@@ -8,11 +8,11 @@ environment:
   image: docker.io/zukidocker/solar:debian11
 
 installers:
-  - pattern: "bin/jobarranger-agentd*debian11*.deb"
+  - pattern: "bin/jobarranger-agentd-{VERSION}*debian11*.deb"
     use_preset: agentd-deb
 
-  - pattern: "bin/jobarranger-manager*debian11*.deb"
+  - pattern: "bin/jobarranger-manager-{VERSION}*debian11*.deb"
     use_preset: manager-deb
 
-  - pattern: "bin/jobarranger-utils*debian11*.deb"
+  - pattern: "bin/jobarranger-utils-{VERSION}*debian11*.deb"
     use_preset: utils

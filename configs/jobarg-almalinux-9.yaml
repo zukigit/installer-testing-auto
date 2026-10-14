@@ -8,14 +8,14 @@ environment:
   image: docker.io/zukidocker/solar:almalinux9
 
 installers:
-  - pattern: "bin/jobarranger-server*el9*.rpm"
+  - pattern: "bin/jobarranger-server-{VERSION}*el9*.rpm"
     use_preset: server-rpm
 
-  - pattern: "bin/jobarranger-agentd*el9*.rpm"
+  - pattern: "bin/jobarranger-agentd-{VERSION}*el9*.rpm"
     use_preset: agentd-rpm
 
-  - pattern: "bin/jobarranger-manager*el9*.rpm"
+  - pattern: "bin/jobarranger-manager-{VERSION}*el9*.rpm"
     use_preset: manager-rpm
 
-  - pattern: "bin/jobarranger-utils*el9*.rpm"
+  - pattern: "bin/jobarranger-utils-{VERSION}*el9*.rpm"
     use_preset: utils
