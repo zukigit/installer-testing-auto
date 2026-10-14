@@ -61,8 +61,10 @@ type Config struct {
 	Installers  []InstallerSpec `yaml:"installers"`
 }
 
-// Load reads and validates one config file.
-func Load(path string) (*Config, error) {
+// Load reads and validates one config file. vars are the pattern variables
+// from --var NAME=VALUE: they substitute {NAME} tokens in installer patterns
+// (patterns only — see docs/wildcard-checks-pattern-vars-plan.md).
+func Load(path string, vars map[string]string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
@@ -71,10 +73,16 @@ func Load(path string) (*Config, error) {
 	if err := NewStrictDecoder(data).Decode(cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
+	for i := range cfg.Installers {
+		cfg.Installers[i].Pattern = Substitute(cfg.Installers[i].Pattern, vars)
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config %s: %w", path, err)
 	}
 	if err := cfg.applyPresets(); err != nil {
+		return nil, fmt.Errorf("invalid config %s: %w", path, err)
+	}
+	if err := cfg.validateGlobPaths(); err != nil {
 		return nil, fmt.Errorf("invalid config %s: %w", path, err)
 	}
 	return cfg, nil
@@ -97,6 +105,66 @@ func (c *Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// validateGlobPaths checks glob-mode must_exist / must_not_exist entries
+// against the restricted charset. An unquoted glob is shell-active: anything
+// outside the charset would word-split or execute. Runs after applyPresets
+// since preset bodies can carry check paths. Braces are allowed as literal
+// characters (POSIX sh has no brace expansion), so a leftover {VAR} in a glob
+// path is literal text that matches nothing.
+func (c *Config) validateGlobPaths() error {
+	for i, inst := range c.Installers {
+		for _, bc := range []struct {
+			name   string
+			checks *Checks
+		}{
+			{"install_checks", inst.InstallChecks},
+			{"uninstall_checks", inst.UninstallChecks},
+			{"upgrade_checks", inst.UpgradeChecks},
+		} {
+			if bc.checks == nil {
+				continue
+			}
+			for _, paths := range []struct {
+				name  string
+				items []string
+			}{
+				{"must_exist", bc.checks.MustExist},
+				{"must_not_exist", bc.checks.MustNotExist},
+			} {
+				for j, path := range paths.items {
+					if IsGlobPath(path) && !validGlobCharset(path) {
+						return fmt.Errorf("installers[%d].%s.%s[%d]: glob path %q contains whitespace or shell metacharacters; use a commands check for such paths",
+							i, bc.name, paths.name, j, path)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// IsGlobPath reports whether a check path is a glob entry: it contains any
+// glob metacharacter (*, ?, [). Exact paths keep the literal test -e probe.
+func IsGlobPath(path string) bool {
+	return strings.ContainsAny(path, "*?[")
+}
+
+// validGlobCharset reports whether the glob path consists only of characters
+// safe to hand to an unquoted shell expansion: letters, digits, '/ . - _ +',
+// literal braces, and the glob metachars * ? [ ].
+func validGlobCharset(path string) bool {
+	for _, r := range path {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '/' || r == '.' || r == '-' || r == '_' || r == '+' ||
+			r == '{' || r == '}' || r == '*' || r == '?' || r == '[' || r == ']':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Discover resolves the config glob. An empty pattern falls back to

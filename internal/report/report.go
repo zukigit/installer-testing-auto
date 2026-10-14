@@ -71,6 +71,28 @@ func (ev *Event) num(key string) (int, bool) {
 	return int(f), ok
 }
 
+// strs reads a JSON array of strings (e.g. glob-check `matches`). An
+// empty array parses as nil so "matches omitted" and "matches: []" are
+// indistinguishable.
+func (ev *Event) strs(key string) []string {
+	items, ok := ev.Data[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		s, ok := it.(string)
+		if !ok {
+			return nil
+		}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func (ev *Event) flag(key string) bool {
 	v, _ := ev.Data[key].(bool)
 	return v
@@ -94,6 +116,8 @@ type checkRec struct {
 	stdoutContains string
 	detail         string
 	stdout, stderr string
+	glob           bool     // file checks: glob entry (v3.2)
+	matches        []string // glob entry: matched names (log evidence; stored, not rendered)
 }
 
 type caseRec struct {
@@ -242,6 +266,8 @@ func (r *Run) apply(ev *Event) {
 			stdoutContains: ev.str("expected_stdout_contains"),
 			detail:         ev.str("detail"),
 			stdout:         ev.str("stdout"), stderr: ev.str("stderr"),
+			glob:    ev.flag("glob"),
+			matches: ev.strs("matches"),
 		})
 	case "case_end":
 		c := r.caseCtx(ev)

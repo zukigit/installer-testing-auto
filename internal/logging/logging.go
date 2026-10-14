@@ -55,11 +55,15 @@ func (e *Emitter) write(level, event, envName, taskName, installer, fromInstalle
 	_, _ = e.w.Write(append(line, '\n'))
 }
 
-// RunStart announces the run: number of configs, planned cases and parallel limit.
-func (e *Emitter) RunStart(configs, cases, parallel int) {
-	e.write("info", "run_start", "", "", "", "", map[string]any{
-		"configs": configs, "cases": cases, "parallel": parallel,
-	})
+// RunStart announces the run: number of configs, planned cases, parallel
+// limit and the pattern variables (--var) provided for this run (omitted when
+// none — old logs are unaffected).
+func (e *Emitter) RunStart(configs, cases, parallel int, vars map[string]string) {
+	data := map[string]any{"configs": configs, "cases": cases, "parallel": parallel}
+	if len(vars) > 0 {
+		data["vars"] = vars
+	}
+	e.write("info", "run_start", "", "", "", "", data)
 }
 
 // RunEnd closes the run with aggregated case totals.

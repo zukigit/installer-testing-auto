@@ -80,8 +80,9 @@ func (c *Config) Resolve(path string) (*Bundle, error) {
 }
 
 // LoadBundle loads, validates and resolves one config file in one step.
-func LoadBundle(path string) (*Bundle, error) {
-	cfg, err := Load(path)
+// vars are the pattern variables (see Load).
+func LoadBundle(path string, vars map[string]string) (*Bundle, error) {
+	cfg, err := Load(path, vars)
 	if err != nil {
 		return nil, err
 	}

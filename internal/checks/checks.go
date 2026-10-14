@@ -16,11 +16,40 @@ import (
 
 // Run executes every check in cs against the environment and returns the
 // passed/failed totals. cs may be nil (no checks configured for this phase).
+// must_exist / must_not_exist entries containing any of * ? [ are glob
+// patterns expanded by the environment's own shell (v3.2); exact entries keep
+// the literal test -e probe.
 func Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, cs *config.Checks, cl *logging.CaseLogger) (passed, failed int) {
 	if cs == nil {
 		return 0, 0
 	}
 	for _, path := range cs.MustExist {
+		if config.IsGlobPath(path) {
+			matched, code, err := probeGlob(ctx, e, path)
+			fields := map[string]any{
+				"path":        path,
+				"expectation": expectationMustExist,
+				"glob":        true,
+				"exit_code":   code,
+			}
+			if m := capMatches(matched, err == nil); m != nil {
+				fields["matches"] = m
+			}
+			pass := err == nil && len(matched) > 0
+			switch {
+			case err != nil:
+				fields["detail"] = err.Error()
+			case !pass:
+				fields["detail"] = "no files match pattern"
+			}
+			cl.Check("file", "", pass, fields)
+			if pass {
+				passed++
+			} else {
+				failed++
+			}
+			continue
+		}
 		exists, code, output, err := probeFile(ctx, e, path)
 		fields := map[string]any{
 			"path":        path,
@@ -42,6 +71,32 @@ func Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, c
 		}
 	}
 	for _, path := range cs.MustNotExist {
+		if config.IsGlobPath(path) {
+			matched, code, err := probeGlob(ctx, e, path)
+			fields := map[string]any{
+				"path":        path,
+				"expectation": expectationMustNotExist,
+				"glob":        true,
+				"exit_code":   code,
+			}
+			if m := capMatches(matched, err == nil); m != nil {
+				fields["matches"] = m
+			}
+			pass := err == nil && len(matched) == 0
+			switch {
+			case err != nil:
+				fields["detail"] = err.Error()
+			case !pass:
+				fields["detail"] = fmt.Sprintf("%d file(s) still match pattern: %s", len(matched), strings.Join(capMatches(matched, true), ", "))
+			}
+			cl.Check("file", "", pass, fields)
+			if pass {
+				passed++
+			} else {
+				failed++
+			}
+			continue
+		}
 		exists, code, output, err := probeFile(ctx, e, path)
 		fields := map[string]any{
 			"path":        path,
@@ -107,6 +162,24 @@ const (
 	expectationMustNotExist = "must_not_exist"
 )
 
+// maxMatchedNames caps the matched-names list in check events; beyond it the
+// list ends with "... (N more)".
+const maxMatchedNames = 20
+
+// capMatches returns the matched names for the event, capped at
+// maxMatchedNames with a "... (N more)" tail entry. On exec error matched is
+// meaningless, so the list is dropped (nil).
+func capMatches(matched []string, valid bool) []string {
+	if !valid || len(matched) == 0 {
+		return nil
+	}
+	if len(matched) <= maxMatchedNames {
+		return matched
+	}
+	out := append([]string{}, matched[:maxMatchedNames]...)
+	return append(out, fmt.Sprintf("... (%d more)", len(matched)-maxMatchedNames))
+}
+
 func withStdout(fields map[string]any, output string) map[string]any {
 	if out := strings.TrimSpace(output); out != "" {
 		fields["stdout"] = out
@@ -133,4 +206,21 @@ func probeFile(ctx context.Context, e env.Environment, path string) (exists bool
 
 func quote(s string) string {
 	return "'" + s + "'"
+}
+
+// probeGlob expands a glob check path with the environment's shell: the
+// pattern is passed unquoted so /bin/sh expands it, and `ls -d` lists the
+// matches (files and directories, non-recursively). PASS is determined by the
+// number of matched names on stdout — NOT by the exit code, which conflates
+// "no match" (pattern passed through literally, ls exits 2) with real errors
+// such as unreadable directories.
+func probeGlob(ctx context.Context, e env.Environment, pattern string) (matched []string, code int, err error) {
+	stdout, _, code, err := e.Exec(ctx, []string{"/bin/sh", "-c", "ls -d -- " + pattern})
+	if err != nil {
+		return nil, -1, fmt.Errorf("exec ls -d: %w", err)
+	}
+	if s := strings.TrimSpace(stdout); s != "" {
+		matched = strings.Split(s, "\n")
+	}
+	return matched, code, nil
 }

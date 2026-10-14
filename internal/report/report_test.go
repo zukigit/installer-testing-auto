@@ -88,6 +88,56 @@ func TestParseAndRenderCompact(t *testing.T) {
 	}
 }
 
+// Glob file checks (v3.2) render via the existing detail lines: the configured
+// pattern is the row label, the failure detail comes from the event. The
+// matches/glob fields are parsed and stored without changing rendering, and
+// the run_start vars key is ignored (no report changes for feature B).
+func TestGlobCheckRendering(t *testing.T) {
+	log := `
+{"ts":"2026-10-14T12:00:00.000Z","level":"info","event":"run_start","data":{"configs":1,"cases":1,"parallel":5,"vars":{"VERSION":"7.2.2"}}}
+{"ts":"2026-10-14T12:00:00.010Z","level":"info","event":"env_start","env":"rocky-9","data":{"image":"rocky:9","workdir":"/tmp"}}
+{"ts":"2026-10-14T12:00:00.400Z","level":"info","event":"case_start","env":"rocky-9","task":"fresh-install","installer":"server.rpm","data":{"container_id":"a1","container_name":"ita-rocky-9-server-rpm-fresh-install"}}
+{"ts":"2026-10-14T12:00:00.500Z","level":"info","event":"step","env":"rocky-9","task":"fresh-install","installer":"server.rpm","data":{"kind":"copy","exit_code":0,"pass":true}}
+{"ts":"2026-10-14T12:00:01.000Z","level":"info","event":"check","env":"rocky-9","task":"fresh-install","installer":"server.rpm","data":{"kind":"file","path":"/usr/share/man/man8/jobarg_server.8.*","expectation":"must_exist","glob":true,"exit_code":2,"pass":false,"detail":"no files match pattern","matches":[]}}
+{"ts":"2026-10-14T12:00:01.500Z","level":"error","event":"case_end","env":"rocky-9","task":"fresh-install","installer":"server.rpm","data":{"container_id":"a1","pass":false,"passed":0,"failed":1,"duration_ms":1100}}
+{"ts":"2026-10-14T12:00:02.000Z","level":"info","event":"env_end","env":"rocky-9","data":{"passed":0,"failed":1}}
+{"ts":"2026-10-14T12:00:02.000Z","level":"error","event":"run_end","data":{"passed":0,"failed":1}}
+`
+	run, err := Parse(strings.NewReader(log))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	// glob/matches are stored on the parsed record (log consumers see them
+	// via NDJSON; rendering needs no change)
+	if len(run.allCases) != 1 {
+		t.Fatalf("expected 1 case, got %d", len(run.allCases))
+	}
+	cks := run.allCases[0].checks
+	if len(cks) != 1 || !cks[0].glob {
+		t.Fatalf("glob check not parsed: %+v", cks)
+	}
+	if cks[0].matches != nil {
+		t.Errorf("empty matches should parse as nil, got %v", cks[0].matches)
+	}
+
+	var sb strings.Builder
+	run.RenderText(&sb, false)
+	out := sb.String()
+	for _, want := range []string{
+		"/usr/share/man/man8/jobarg_server.8.*", // the pattern is the row label
+		"must exist",
+		"detail: no files match pattern", // failure detail renders like any other
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report missing %q\nreport:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "vars:") {
+		t.Errorf("report must not render a vars line (decision 17)\nreport:\n%s", out)
+	}
+}
+
 func TestRenderDetailsView(t *testing.T) {
 	run, err := Parse(strings.NewReader(sampleNDJSON))
 	if err != nil {

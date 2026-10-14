@@ -31,6 +31,9 @@ type Options struct {
 	Tasks []string
 	// Installer is an optional glob filtering the package list (e.g. "bin/my-app-*.rpm").
 	Installer string
+	// Vars are the pattern variables (--var NAME=VALUE) substituted into
+	// installer patterns at load time (v3.2). Unset names substitute as "".
+	Vars map[string]string
 	// Parallel is the global max number of simultaneously running cases/containers.
 	Parallel int
 	// Keep keeps failed cases' containers alive for debugging.
@@ -38,13 +41,13 @@ type Options struct {
 }
 
 // List resolves and prints every config without touching any environment.
-func List(configPattern string) error {
+func List(configPattern string, vars map[string]string) error {
 	paths, err := config.Discover(configPattern)
 	if err != nil {
 		return err
 	}
 	for _, path := range paths {
-		b, err := config.LoadBundle(path)
+		b, err := config.LoadBundle(path, vars)
 		if err != nil {
 			report.ListError(path, err)
 			continue
@@ -89,7 +92,7 @@ func Run(ctx context.Context, opts Options) int {
 		return 1
 	}
 
-	log.RunStart(len(paths), len(cases), opts.Parallel)
+	log.RunStart(len(paths), len(cases), opts.Parallel, opts.Vars)
 
 	// upgrade skips are progress events, not failures — emitted before any case
 	for _, sk := range skips {
@@ -145,7 +148,7 @@ func buildQueue(paths []string, opts Options, log *logging.Emitter) ([]caseDef, 
 	var skips []skipDef
 	upgradeSelected := taskSelected(opts.Tasks, task.UpgradeName)
 	for _, path := range paths {
-		b, err := config.LoadBundle(path)
+		b, err := config.LoadBundle(path, opts.Vars)
 		if err != nil {
 			log.Error(fmt.Sprintf("config %s: %v", path, err))
 			configErrors++

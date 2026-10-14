@@ -6,8 +6,9 @@ Automation tool to test installer files on target environments using
 ## How it works
 
 1. Drop installer files into `bin/` (never committed).
-2. Describe each target environment in `configs/<env>.yaml` — one file per environment:
-   docker image, installer file patterns (**wildcards allowed**), and optional
+3. Describe each target environment in `configs/<env>.yaml` — one file per environment:
+   docker image, installer file patterns (**wildcards allowed**, with
+   `{VAR}` variables set by `--var NAME=VALUE`), and optional
    per-installer checks (`must_exist`, `must_not_exist`, shell `commands`).
 3. Run the tool: every **(installer file × task) pair** becomes an independent test
    case with **its own container**. Cases run in parallel through a **global pool** —
@@ -26,8 +27,10 @@ Automation tool to test installer files on target environments using
 
 See `docs/installer-testing-tool-plan.md` (v1 baseline),
 `docs/container-per-task-plan.md` (v2 design),
-`docs/upgrade-task-plan.md` (v3 upgrade task) and
-`docs/shared-checks-presets-plan.md` (v3.1 shared presets)
+`docs/upgrade-task-plan.md` (v3 upgrade task),
+`docs/shared-checks-presets-plan.md` (v3.1 shared presets) and
+`docs/wildcard-checks-pattern-vars-plan.md` (v3.2 wildcard checks + pattern
+variables)
 for the full design.
 
 ## Usage
@@ -44,6 +47,9 @@ go build -mod=vendor -o installer-test-exec github.com/zukigit/installer-testing
 
 # install cases only, 8 containers max
 ./installer-test-exec run --task fresh-install --parallel 8 | tee run.jsonl
+
+# pattern variables: substitute {VERSION} into installer patterns
+./installer-test-exec run --var VERSION=7.2.2 | tee run.jsonl
 
 # one environment + installer filter
 ./installer-test-exec run --config configs/rocky-9.yaml --installer "bin/*.rpm" | tee run.jsonl
@@ -86,10 +92,11 @@ environment:
   image: ubuntu:24.04
 
 installers:
-  - pattern: "bin/*.deb"
+  - pattern: "bin/*.deb"          # wildcards allowed; {VAR} set via --var (see below)
     install_checks:
       commands:
         - command: "dpkg -s {package}"
+```
     uninstall_checks:
       commands:
         - command: "dpkg -s {package}"
@@ -115,7 +122,7 @@ run once per matched file.
 
 | Key                | Required? | Description |
 |--------------------|-----------|-------------|
-| `pattern`          | **required** | Glob relative to the repo root (e.g. `bin/*.deb`). Must match at least one file, or the run fails. |
+| `pattern`          | **required** | Glob relative to the repo root (e.g. `bin/*.deb`). Must match at least one file, or the run fails. May contain `{VAR}` variables set via `--var NAME=VALUE` (see [Pattern variables](#pattern-variables-var-in-installer-patterns)). |
 | `use_preset`       | optional | Name of a preset defined in the config's presets file (see [Shared presets](#shared-presets-configssharedpresetsyaml)). A preset may carry any installer key except `pattern`; a locally defined key beats the preset. |
 | `install_command`  | optional | Install command template. Defaults by file extension (table below). |
 | `uninstall_command`| optional | Uninstall command template. Defaults by file extension — **`.sh` has no default, so it must be set explicitly for scripts**. |
@@ -145,9 +152,35 @@ The `upgrade` task needs installer file names carrying versions:
 
 | Key              | Required? | Description |
 |------------------|-----------|-------------|
-| `must_exist`     | optional  | List of file paths that must exist after the phase (e.g. `/usr/bin/myapp`). |
-| `must_not_exist` | optional  | List of file paths that must NOT exist after the phase. |
+| `must_exist`     | optional  | List of file paths that must exist after the phase (e.g. `/usr/bin/myapp`). Entries containing `*`, `?` or `[` are **glob patterns** expanded by the container's shell (see [Wildcard file checks](#wildcard-file-checks)). |
+| `must_not_exist` | optional  | List of file paths that must NOT exist after the phase. Same glob support. |
 | `commands`       | optional  | List of shell command checks (see below). |
+
+### Wildcard file checks
+
+A `must_exist` / `must_not_exist` entry containing any of `*`, `?`, `[` is a
+glob pattern, expanded by the **container's own `/bin/sh`** (POSIX glob:
+`*`, `?`, `[...]`; `**` is not recursive). Files and directories both count:
+
+- `must_exist` glob: PASS iff the pattern expands to **at least 1** name
+  (and the check event records every matched name, capped at 20).
+- `must_not_exist` glob: PASS iff the pattern expands to **0** names.
+
+```yaml
+install_checks:
+  must_exist:
+    - /usr/share/man/man8/jobarg_server.8.*   # any compression/layout variation
+uninstall_checks:
+  must_not_exist:
+    - /etc/jobarranger/jobarg_server.conf*    # incl. *.rpmnew leftovers
+```
+
+Exact paths (no glob characters) keep the literal `test -e` probe — existing
+configs behave identically. Glob paths are passed **unquoted** to the shell,
+so they are validated at load time: they may only contain letters, digits,
+`/ . - _ + { }` and the glob metachars `* ? [ ]`. Anything else (whitespace,
+`$`, `;`, quotes, ...) is a load error — use a `commands` check for such
+paths.
 
 ### `commands` entries
 
@@ -201,6 +234,36 @@ Presets files live under `configs/shared/`, which is **never treated as
 environment configs** — even custom `--config` globs (e.g.
 `configs/**/*.yaml`) skip that directory, so you can keep several presets
 files side by side (e.g. per product).
+
+### Pattern variables ({VAR} in installer patterns)
+
+A pattern can carry `{NAME}` variables (uppercase names, `NAME` matching
+`[A-Z][A-Z0-9_]*`) that are substituted at load time from **`--var NAME=VALUE`**
+command-line flags (repeatable, on `run` and `list`; last value wins, unused
+names ignored):
+
+```yaml
+installers:
+  - pattern: "bin/jobarranger-server-{VERSION}*el8*.rpm"
+    use_preset: server-rpm
+```
+
+```sh
+# the version under test is a run input, not a config edit:
+./installer-test-exec run --var VERSION=7.2.2 | tee run.jsonl
+./installer-test-exec list --config configs/rocky-9.yaml --var VERSION=7.2.2
+```
+
+- A variable **not provided** (or provided empty, `--var VERSION=`)
+  substitutes as the empty string — the resulting pattern matches no files
+  and the regular "pattern matched no files" load error fires. No prompting.
+- A typical subrange pattern (`...-{VERSION}*el8*.rpm`) with an empty value
+  still matches *all* versions: the glob decides, there is no special case.
+- Variables substitute **in installer patterns only**. A `{VAR}` left in a
+  check path or command is literal text (a `must_exist` path with a literal
+  `{VAR}` acts like a path that does not exist).
+- Lowercase braces are the built-in command placeholders below
+  (`{installer}`, `{package}`, `{basename}`) — never substituted here.
 
 ### Command placeholders
 

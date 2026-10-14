@@ -14,9 +14,11 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 
+	"github.com/zukigit/installer-testing-auto/internal/config"
 	"github.com/zukigit/installer-testing-auto/internal/report"
 	"github.com/zukigit/installer-testing-auto/internal/runner"
 	"github.com/zukigit/installer-testing-auto/internal/task"
@@ -26,7 +28,8 @@ const usage = `installer-test — test installer files on target environments
 
 Usage:
   installer-test run    [--config GLOB] [--task LIST] [--installer GLOB] [--parallel N] [--keep]
-  installer-test list   [--config GLOB]
+                        [--var NAME=VALUE ...]
+  installer-test list   [--config GLOB] [--var NAME=VALUE ...]
   installer-test report --from FILE|-
 
 Subcommands:
@@ -49,6 +52,13 @@ Flags (run):
   --parallel N       max containers running at the same time (default 5, min 1)
   --keep             keep containers of failed cases for debugging
                      (container IDs are always logged)
+  --var NAME=VALUE   set a pattern variable ({NAME} in installer patterns);
+                     repeatable; an unset variable substitutes as ""
+                     (the pattern then usually matches no files -> load error)
+
+Flags (list):
+  --config GLOB      config glob; default: configs/*.yaml (all environments)
+  --var NAME=VALUE   same as for run
 
 Flags (report):
   --from FILE|-      NDJSON log file, or stdin with "-"
@@ -59,6 +69,7 @@ Examples:
   installer-test run | tee run.jsonl
   installer-test run --task fresh-install --parallel 8 | tee run.jsonl
   installer-test run --config configs/rocky-9.yaml --installer "bin/*.rpm"
+  installer-test run --var VERSION=7.2.2 | tee run.jsonl
   installer-test report --from run.jsonl
   installer-test report --details --from run.jsonl
 `
@@ -95,6 +106,8 @@ func cmdRun(args []string) int {
 	installer := fs.String("installer", "", "glob filter for the package list")
 	parallel := fs.Int("parallel", runner.DefaultParallel, "max containers running at the same time")
 	keep := fs.Bool("keep", false, "keep containers of failed cases for debugging")
+	vars := varFlags{}
+	fs.Var(vars, "var", "pattern variable NAME=VALUE ({NAME} in installer patterns); repeatable")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -117,6 +130,7 @@ func cmdRun(args []string) int {
 		ConfigPattern: *configPattern,
 		Tasks:         tasks,
 		Installer:     *installer,
+		Vars:          vars,
 		Parallel:      *parallel,
 		Keep:          *keep,
 	})
@@ -125,6 +139,8 @@ func cmdRun(args []string) int {
 func cmdList(args []string) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	configPattern := fs.String("config", "", "config glob (default: configs/*.yaml)")
+	vars := varFlags{}
+	fs.Var(vars, "var", "pattern variable NAME=VALUE ({NAME} in installer patterns); repeatable")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -132,7 +148,7 @@ func cmdList(args []string) int {
 		fmt.Fprintf(os.Stderr, "unexpected argument(s): %s\n", strings.Join(fs.Args(), " "))
 		return 2
 	}
-	if err := runner.List(*configPattern); err != nil {
+	if err := runner.List(*configPattern, vars); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR   %v\n", err)
 		return 1
 	}
@@ -167,6 +183,29 @@ func cmdReport(args []string) int {
 	}
 	run.RenderText(os.Stdout, *details)
 	return 0
+}
+
+// varFlags collects repeatable --var NAME=VALUE flags into a map (last value
+// wins on duplicate names). Values participate in pattern substitution
+// literally; unused names are silently ignored.
+type varFlags map[string]string
+
+func (v varFlags) String() string {
+	names := make([]string, 0, len(v))
+	for n := range v {
+		names = append(names, n+"="+v[n])
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
+}
+
+func (v varFlags) Set(s string) error {
+	name, value, ok := strings.Cut(s, "=")
+	if !ok || !config.ValidVarName(name) {
+		return fmt.Errorf("--var expects NAME=VALUE with NAME matching [A-Z][A-Z0-9_]* (got %q)", s)
+	}
+	v[name] = value
+	return nil
 }
 
 // parseTasks validates the --task list. Empty means "all tasks".

@@ -70,7 +70,7 @@ installers:
     use_preset: pkg-rpm
 `,
 	}))
-	cfg, err := Load("configs/test.yaml")
+	cfg, err := Load("configs/test.yaml", nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -105,7 +105,7 @@ installers:
 `,
 		"bin/pkg-1.0.0-1.el9.rpm": "",
 	}))
-	b, err := LoadBundle("configs/test.yaml")
+	b, err := LoadBundle("configs/test.yaml", nil)
 	if err != nil {
 		t.Fatalf("load bundle: %v", err)
 	}
@@ -142,7 +142,7 @@ installers:
       must_exist: ["/local"]
 `,
 	}))
-	cfg, err := Load("configs/test.yaml")
+	cfg, err := Load("configs/test.yaml", nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -167,7 +167,7 @@ installers:
     use_preset: nope
 `,
 	}))
-	_, err := Load("configs/test.yaml")
+	_, err := Load("configs/test.yaml", nil)
 	if err == nil {
 		t.Fatal("expected load error for unknown preset")
 	}
@@ -219,7 +219,7 @@ func TestMissingPresetsFile(t *testing.T) {
 				files[k] = v
 			}
 			writeTestFiles(t, files)
-			_, err := Load("configs/test.yaml")
+			_, err := Load("configs/test.yaml", nil)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("Load error = %v, wantErr = %v", err, tt.wantErr)
 			}
@@ -263,7 +263,7 @@ installers:
     use_preset: p
 `,
 			})
-			_, err := Load("configs/test.yaml")
+			_, err := Load("configs/test.yaml", nil)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("error = %v, want containing %q", err, tt.wantErr)
 			}
@@ -299,7 +299,7 @@ installers:
   - pattern: "bin/*.rpm"
 `,
 	})
-	b, err := LoadBundle("configs/test.yaml")
+	b, err := LoadBundle("configs/test.yaml", nil)
 	if err != nil {
 		t.Fatalf("load bundle: %v", err)
 	}

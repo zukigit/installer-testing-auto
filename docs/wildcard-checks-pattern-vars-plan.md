@@ -1,9 +1,9 @@
 # Wildcard Check Paths & Pattern Variables Plan (v3.2) — glob `must_exist`/`must_not_exist` + `{VAR}` in installer patterns
 
-> Status: **CONFIRMED — ready to implement** (all decisions confirmed, including
-> the scope decision: variables substitute in installer **patterns only**;
-> anywhere else `{VAR}` is literal text that matches nothing — §12).
-> (No code changed yet.)
+> Status: **IMPLEMENTED** (confirmed decisions: variables in **patterns only**,
+> unset/empty variable -> `""` -> the glob decides, `--var` flag only with no
+> prompting, no scope guard — `{VAR}` elsewhere is literal text, glob checks
+> accept files and directories, no report/`list` output changes).
 > Baseline: the implemented v3.1 design (see `docs/shared-checks-presets-plan.md`,
 > `docs/upgrade-task-plan.md`, `docs/container-per-task-plan.md`).
 > Scope: **two independent features** — (A) wildcard support in file checks,
