@@ -6,42 +6,214 @@ presets:
   server-rpm:
     install_checks:
       must_exist:
-        - /usr/share/doc/jobarranger-server/database
+        - /usr/local/sbin
+        - /usr/local/sbin/jobarg_server
+        - /usr/local/sbin/jobarg_framework_server
+        - /usr/local/sbin/jobarg_manager_monitor_server
+        - /usr/local/bin/jobarranger
+        - /usr/local/bin/jobarranger/agentless_icon_client
+        - /usr/local/bin/jobarranger/calc_icon_client
+        - /usr/local/bin/jobarranger/checkjob_icon_client
+        - /usr/local/bin/jobarranger/end_icon_client
+        - /usr/local/bin/jobarranger/extension_icon_client
+        - /usr/local/bin/jobarranger/fcopy_icon_client
+        - /usr/local/bin/jobarranger/fwait_icon_client
+        - /usr/local/bin/jobarranger/ifend_icon_client
+        - /usr/local/bin/jobarranger/if_icon_client
+        - /usr/local/bin/jobarranger/info_icon_client
+        - /usr/local/bin/jobarranger/job_icon_client
+        - /usr/local/bin/jobarranger/jobnet_icon_client
+        - /usr/local/bin/jobarranger/loop_icon_client
+        - /usr/local/bin/jobarranger/m_icon_client
+        - /usr/local/bin/jobarranger/reboot_icon_client
+        - /usr/local/bin/jobarranger/release_icon_client
+        - /usr/local/bin/jobarranger/start_icon_client
+        - /usr/local/bin/jobarranger/task_icon_client
+        - /usr/local/bin/jobarranger/variable_icon_client
+        - /usr/local/bin/jobarranger/w_icon_client
+        - /usr/local/bin/jobarranger/zabbix_icon_client
+        - /usr/local/bin/jobarranger/alarm_icon_client
+        - /usr/local/bin/jobarranger/client_helper
+        - /usr/local/bin/jobarranger/jobarg_monitor_maria
+        - /usr/local/bin/jobarranger/jobarg_monitor_mysql
+        - /usr/local/bin/jobarranger/jobarg_monitor_postgres
+        - /usr/local/bin/jobarranger/jobarg_winrm
+        - /usr/local/bin/jobarranger/ssh_client
+        - /usr/local/bin/jobarranger/dbsyncer_manager.so
+        - /usr/local/bin/jobarranger/flow_manager.so
+        - /usr/local/bin/jobarranger/housekeeper_manager.so
+        - /usr/local/bin/jobarranger/icon_exec_manager.so
+        - /usr/local/bin/jobarranger/icon_result_manager.so
+        - /usr/local/bin/jobarranger/jobnet_manager.so
+        - /usr/local/bin/jobarranger/maria_database.so
+        - /usr/local/bin/jobarranger/mysql_database.so
+        - /usr/local/bin/jobarranger/mysql_database_v21.1.26.so
+        - /usr/local/bin/jobarranger/notification_manager.so
+        - /usr/local/bin/jobarranger/psql_database.so
+        - /usr/local/bin/jobarranger/recovery_manager.so
+        - /usr/local/bin/jobarranger/timer_manager.so
+        - /usr/local/bin/jobarranger/trapper_manager.so
+        - /usr/local/bin/jobarranger/zabbix_link_manager.so
+        - /usr/local/bin/jobarranger/zabbix_v6.so
+        - /usr/local/bin/jobarranger/zabbix_v7.so
+        - /usr/local/bin/jobarranger/zabbix_v8.so
+        - /etc/jobarranger/jobarg_server.conf
+        - /etc/jobarranger/locale/server_logmessage_64BIT.txt
+        - /usr/lib/systemd/system/jobarg-server.service
+        - /etc/tmpfiles.d/jobarranger_server.conf
+        - /etc/logrotate.d/jobarg-server
+        - /usr/share/man/man8/jobarg_server.8.*
+        - /usr/share/doc/jobarranger-server/database/data
+        - /usr/share/doc/jobarranger-server/database/migrate
+        - /usr/share/doc/jobarranger-server/database/upgrade
+        - /usr/share/doc/jobarranger-server/database/mysql
+        - /usr/share/doc/jobarranger-server/database/postgresql
+        - /var/log/jobarranger
+        - /var/run/jobarranger
+        - /var/lib/jobarranger/server
+        - /usr/local/bin/jobarranger/server_socks
     uninstall_checks:
       must_not_exist:
         - /usr/share/doc/jobarranger-server/database
         - /var/log/jobarranger
         - /etc/jobarranger/jobarg_server.conf
+        - /etc/jobarranger/locale/server_logmessage_64BIT.txt
+        - /etc/jobarranger/locale
+        - /usr/lib/systemd/system/jobarg-server.service
+        - /etc/tmpfiles.d/jobarranger_server.conf
+        - /etc/logrotate.d/jobarg-server
         - /var/lib/jobarranger/server
+        - /usr/local/bin/jobarranger/server_socks
+        - /usr/local/sbin/jobarg_server
+        - /usr/local/bin/jobarranger
+        - /usr/share/man/man8/jobarg_server.8.*
     upgrade_command: "echo new >> /etc/jobarranger/jobarg_server.conf && rpm -Uvh {installer}"
     upgrade_checks:
       must_exist:
+        - /etc/jobarranger/jobarg_server.conf
         - /etc/jobarranger/jobarg_server.conf.rpmnew
+        - /usr/share/doc/jobarranger-server/database/upgrade
   server-deb:
     install_checks:
       must_exist:
+        - /usr/local/sbin
+        - /usr/local/sbin/jobarg_server
+        - /usr/local/sbin/jobarg_framework_server
+        - /usr/local/sbin/jobarg_manager_monitor_server
+        - /usr/local/bin/jobarranger
+        - /usr/local/bin/jobarranger/agentless_icon_client
+        - /usr/local/bin/jobarranger/calc_icon_client
+        - /usr/local/bin/jobarranger/checkjob_icon_client
+        - /usr/local/bin/jobarranger/end_icon_client
+        - /usr/local/bin/jobarranger/extension_icon_client
+        - /usr/local/bin/jobarranger/fcopy_icon_client
+        - /usr/local/bin/jobarranger/fwait_icon_client
+        - /usr/local/bin/jobarranger/ifend_icon_client
+        - /usr/local/bin/jobarranger/if_icon_client
+        - /usr/local/bin/jobarranger/info_icon_client
+        - /usr/local/bin/jobarranger/job_icon_client
+        - /usr/local/bin/jobarranger/jobnet_icon_client
+        - /usr/local/bin/jobarranger/loop_icon_client
+        - /usr/local/bin/jobarranger/m_icon_client
+        - /usr/local/bin/jobarranger/reboot_icon_client
+        - /usr/local/bin/jobarranger/release_icon_client
+        - /usr/local/bin/jobarranger/start_icon_client
+        - /usr/local/bin/jobarranger/task_icon_client
+        - /usr/local/bin/jobarranger/variable_icon_client
+        - /usr/local/bin/jobarranger/w_icon_client
+        - /usr/local/bin/jobarranger/zabbix_icon_client
+        - /usr/local/bin/jobarranger/alarm_icon_client
+        - /usr/local/bin/jobarranger/client_helper
+        - /usr/local/bin/jobarranger/jobarg_monitor_maria
+        - /usr/local/bin/jobarranger/jobarg_monitor_mysql
+        - /usr/local/bin/jobarranger/jobarg_monitor_postgres
+        - /usr/local/bin/jobarranger/jobarg_winrm
+        - /usr/local/bin/jobarranger/ssh_client
+        - /usr/local/bin/jobarranger/dbsyncer_manager.so
+        - /usr/local/bin/jobarranger/flow_manager.so
+        - /usr/local/bin/jobarranger/housekeeper_manager.so
+        - /usr/local/bin/jobarranger/icon_exec_manager.so
+        - /usr/local/bin/jobarranger/icon_result_manager.so
+        - /usr/local/bin/jobarranger/jobnet_manager.so
+        - /usr/local/bin/jobarranger/maria_database.so
+        - /usr/local/bin/jobarranger/mysql_database.so
+        - /usr/local/bin/jobarranger/mysql_database_v21.1.26.so
+        - /usr/local/bin/jobarranger/notification_manager.so
+        - /usr/local/bin/jobarranger/psql_database.so
+        - /usr/local/bin/jobarranger/recovery_manager.so
+        - /usr/local/bin/jobarranger/timer_manager.so
+        - /usr/local/bin/jobarranger/trapper_manager.so
+        - /usr/local/bin/jobarranger/zabbix_link_manager.so
+        - /usr/local/bin/jobarranger/zabbix_v6.so
+        - /usr/local/bin/jobarranger/zabbix_v7.so
+        - /usr/local/bin/jobarranger/zabbix_v8.so
+        - /etc/jobarranger/jobarg_server.conf
+        - /etc/jobarranger/locale/server_logmessage_64BIT.txt
+        - /usr/lib/systemd/system/jobarg-server.service
+        - /etc/tmpfiles.d/jobarranger_server.conf
+        - /etc/logrotate.d/jobarg-server
+        - /usr/share/man/man8/jobarg_server.8.*
         - /usr/share/doc/jobarranger-server/database
+        - /var/log/jobarranger
+        - /var/run/jobarranger
+        - /var/lib/jobarranger/server
     uninstall_command: "apt-get purge -y {package}"
     uninstall_checks:
       must_not_exist:
         - /usr/share/doc/jobarranger-server/database
         - /var/log/jobarranger
         - /etc/jobarranger/jobarg_server.conf
+        - /etc/jobarranger/locale/server_logmessage_64BIT.txt
+        - /etc/jobarranger/locale
+        - /usr/lib/systemd/system/jobarg-server.service
+        - /etc/tmpfiles.d/jobarranger_server.conf
+        - /etc/logrotate.d/jobarg-server
         - /var/lib/jobarranger/server
+        - /usr/local/bin/jobarranger/server_socks
+        - /usr/local/sbin/jobarg_server
+        - /usr/local/bin/jobarranger
+        - /usr/share/man/man8/jobarg_server.8.*
     upgrade_command: "echo new >> /etc/jobarranger/jobarg_server.conf && dpkg -i {installer}"
     upgrade_checks:
       must_exist:
-        - /etc/jobarranger/jobarg_server.conf.new
+        - /etc/jobarranger/jobarg_server.conf.debnew
   agentd-rpm:
+    install_checks:
+      must_exist:
+        - /usr/local/sbin
+        - /usr/local/sbin/jobarg_agentd
+        - /usr/local/sbin/jobarg_framework_agent
+        - /usr/local/sbin/jobarg_manager_monitor_agent
+        - /usr/local/bin/jobarranger
+        - /usr/local/bin/jobarranger/fcopy_client
+        - /usr/local/bin/jobarranger/job_run_client
+        - /usr/local/bin/jobarranger/jobretry_purge
+        - /usr/local/bin/jobarranger/agent_manager.so
+        - /usr/local/bin/jobretry_purge
+        - /etc/jobarranger/jobarg_agentd.conf
+        - /etc/jobarranger/extendedjob/jafcheck.sh
+        - /etc/jobarranger/extendedjob/jafwait.sh
+        - /etc/jobarranger/extendedjob/jareboot.sh
+        - /etc/jobarranger/locale/agent_logmessage_64BIT.txt
+        - /usr/lib/systemd/system/jobarg-agentd.service
+        - /etc/tmpfiles.d/jobarranger_agent.conf
+        - /etc/logrotate.d/jobarg-agentd
+        - /usr/share/man/man8/jobarg_agentd.8.*
+        - /var/log/jobarranger
+        - /var/run/jobarranger
+        - /var/lib/jobarranger/agent
+        - /usr/local/bin/jobarranger/agent_socks
     uninstall_checks:
       must_not_exist:
         - /var/log/jobarranger
         - /etc/jobarranger/jobarg_agentd.conf
         - /var/lib/jobarranger/agent
+        - /usr/local/bin/jobarranger/agent_socks
     upgrade_command: "echo new >> /etc/jobarranger/jobarg_agentd.conf && rpm -Uvh {installer}"
     upgrade_checks:
       must_exist:
-        - /etc/jobarranger/jobarg_agentd.conf.rpmnew
+        - /etc/jobarranger/jobarg_agentd.conf
+        - /etc/jobarranger/jobarg_agentd.conf.debnew
   agentd-deb:
     uninstall_command: "apt-get purge -y {package}"
     uninstall_checks:
