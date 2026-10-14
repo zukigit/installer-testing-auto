@@ -18,3 +18,4 @@ installers:
     use_preset: manager-deb
 
   - pattern: "bin/jobarranger-utils*debian12*.deb"
+    use_preset: utils
