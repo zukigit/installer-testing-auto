@@ -18,3 +18,4 @@ installers:
     use_preset: manager-deb
 
   - pattern: "bin/jobarranger-utils*ubuntu24.04*.deb"
+    use_preset: utils

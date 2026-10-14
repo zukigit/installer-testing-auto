@@ -18,3 +18,4 @@ installers:
     use_preset: manager-rpm
 
   - pattern: "bin/jobarranger-utils*amzn2023*.rpm"
+    use_preset: utils

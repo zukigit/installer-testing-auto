@@ -79,3 +79,10 @@ presets:
     upgrade_checks:
       must_exist:
         - /etc/jobarranger/web/jam.config.php.new
+  utils:
+    install_checks:
+      must_exist:
+    uninstall_checks:
+      must_not_exist:
+    upgrade_checks:
+      must_exist:
