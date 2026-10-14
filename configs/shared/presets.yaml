@@ -13,7 +13,7 @@ presets:
         - /usr/local/bin/jobarranger
         - /usr/local/bin/jobarranger/agentless_icon_client
         - /usr/local/bin/jobarranger/calc_icon_client
-        - /usr/local/bin/jobarranger/checkjob_icon_client
+        - /usr/local/bin/jobarranger/job_icon_client
         - /usr/local/bin/jobarranger/end_icon_client
         - /usr/local/bin/jobarranger/extension_icon_client
         - /usr/local/bin/jobarranger/fcopy_icon_client
@@ -103,7 +103,7 @@ presets:
         - /usr/local/bin/jobarranger
         - /usr/local/bin/jobarranger/agentless_icon_client
         - /usr/local/bin/jobarranger/calc_icon_client
-        - /usr/local/bin/jobarranger/checkjob_icon_client
+        - /usr/local/bin/jobarranger/job_icon_client
         - /usr/local/bin/jobarranger/end_icon_client
         - /usr/local/bin/jobarranger/extension_icon_client
         - /usr/local/bin/jobarranger/fcopy_icon_client
@@ -213,48 +213,110 @@ presets:
     upgrade_checks:
       must_exist:
         - /etc/jobarranger/jobarg_agentd.conf
-        - /etc/jobarranger/jobarg_agentd.conf.debnew
+        - /etc/jobarranger/jobarg_agentd.conf.new
   agentd-deb:
+    install_checks:
+      must_exist:
+        - /usr/local/sbin
+        - /usr/local/sbin/jobarg_agentd
+        - /usr/local/sbin/jobarg_framework_agent
+        - /usr/local/sbin/jobarg_manager_monitor_agent
+        - /usr/local/bin/jobarranger
+        - /usr/local/bin/jobarranger/fcopy_client
+        - /usr/local/bin/jobarranger/job_run_client
+        - /usr/local/bin/jobarranger/jobretry_purge
+        - /usr/local/bin/jobarranger/agent_manager.so
+        - /etc/jobarranger/jobarg_agentd.conf
+        - /etc/jobarranger/extendedjob/jafcheck.sh
+        - /etc/jobarranger/extendedjob/jafwait.sh
+        - /etc/jobarranger/extendedjob/jareboot.sh
+        - /etc/jobarranger/locale/agent_logmessage_64BIT.txt
+        - /usr/lib/systemd/system/jobarg-agentd.service
+        - /etc/tmpfiles.d/jobarranger_agent.conf
+        - /etc/logrotate.d/jobarg-agentd
+        - /usr/share/man/man8/jobarg_agentd.8.*
+        - /var/log/jobarranger
+        - /var/run/jobarranger
+        - /var/lib/jobarranger/agent
     uninstall_command: "apt-get purge -y {package}"
     uninstall_checks:
       must_not_exist:
         - /var/log/jobarranger
+        - /var/log/jobarranger/jobarg_agentd.log
+        - /var/log/jobarranger/jobstatus.chk
         - /etc/jobarranger/jobarg_agentd.conf
         - /var/lib/jobarranger/agent
+        - /usr/local/bin/jobarranger/agent_socks
     upgrade_command: "echo new >> /etc/jobarranger/jobarg_agentd.conf && dpkg -i {installer}"
     upgrade_checks:
       must_exist:
-        - /etc/jobarranger/jobarg_agentd.conf.new
+        - /etc/jobarranger/jobarg_agentd.conf.debnew
+        - /etc/jobarranger/jobarg_agentd.conf
   manager-rpm:
     install_checks:
       must_exist:
         - /usr/share/jobarranger/modules/Module.php
+        - /usr/share/jobarranger/modules
+        - /usr/share/jobarranger/api/app
+        - /usr/share/jobarranger/api/etc
+        - /usr/share/jobarranger/ui
+        - /etc/httpd/conf.d/jobarranger-ui.conf
+        - /etc/httpd/conf.d/jobarranger-api.conf
         - /usr/lib/systemd/system/jam-cleanup.service
     uninstall_checks:
       must_not_exist:
         - /var/log/jobarranger
         - /usr/share/jobarranger
+        - /etc/jobarranger/web
+        - /etc/jobarranger/web/jam.config.php
+        - /etc/httpd/conf.d/jobarranger-ui.conf
+        - /etc/httpd/conf.d/jobarranger-api.conf
     upgrade_command: "echo new >> /etc/jobarranger/web/jam.config.php && rpm -Uvh {installer}"
     upgrade_checks:
       must_exist:
+        - /etc/jobarranger/web/jam.config.php
         - /etc/jobarranger/web/jam.config.php.rpmnew
   manager-deb:
     install_checks:
       must_exist:
-        - /usr/share/jobarranger/modules/Module.php
-        - /usr/lib/systemd/system/jam-cleanup.service
+        - /usr/share/jobarranger/api
+        - /usr/share/jobarranger/ui
+        - /usr/share/jobarranger/modules
+        - /etc/apache2/conf-enabled/jobarranger-ui.conf
+        - /etc/apache2/conf-enabled/jobarranger-api.conf
+        - /lib/systemd/system/jam-cleanup.service
     uninstall_checks:
       must_not_exist:
         - /var/log/jobarranger
         - /usr/share/jobarranger
+        - /etc/jobarranger/web
+        - /etc/jobarranger/web/jam.config.php
+        - /etc/jobarranger/web/jam.config.php.debconf
+        - /etc/apache2/conf-available/jobarranger-ui.conf
+        - /etc/apache2/conf-available/jobarranger-api.conf
     upgrade_command: "echo new >> /etc/jobarranger/web/jam.config.php && dpkg -i {installer}"
     upgrade_checks:
       must_exist:
+        - /etc/jobarranger/web/jam.config.php
         - /etc/jobarranger/web/jam.config.php.new
   utils:
     install_checks:
       must_exist:
+        - /usr/local/bin/jobarranger/jobarg_release
+        - /usr/local/bin/jobarranger/jobarg_exec
+        - /usr/local/bin/jobarranger/jobarg_get
+        - /usr/local/bin/jobarranger/jobarg_joblogput
+        - /usr/local/sbin/jobarg_release
+        - /usr/local/sbin/jobarg_exec
+        - /usr/local/sbin/jobarg_get
+        - /usr/local/sbin/jobarg_joblogput
+        - /usr/share/man/man1/jobarg_*
     uninstall_checks:
       must_not_exist:
+        - /usr/local/sbin/jobarg_release
+        - /usr/local/sbin/jobarg_exec
+        - /usr/local/sbin/jobarg_get
+        - /usr/local/sbin/jobarg_joblogput
+        - /usr/share/man/man1/jobarg_*
     upgrade_checks:
       must_exist:
