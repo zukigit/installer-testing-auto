@@ -6,15 +6,16 @@ import (
 	"testing"
 )
 
-// Substitute replaces uppercase tokens with provided values or "" and leaves
-// lowercase built-in placeholders untouched.
+// Substitute replaces uppercase tokens with provided values; unset or empty
+// tokens become the never-matching {UNSET:NAME} marker, lowercase built-in
+// placeholders stay untouched.
 func TestSubstitute(t *testing.T) {
 	vars := map[string]string{"VERSION": "7.2.2", "EMPTY": ""}
 	cases := []struct{ pattern, want string }{
 		{"bin/jobarranger-server-{VERSION}*el8*.rpm", "bin/jobarranger-server-7.2.2*el8*.rpm"},
-		{"bin/app-{EMPTY}-1.rpm", "bin/app--1.rpm"}, // empty value: literal
-		{"bin/app-{UNSET}.rpm", "bin/app-.rpm"},     // unset: "" (no error)
-		{"bin/jobarg_server.{VERSION}.8.{VERSION}*", "bin/jobarg_server.7.2.2.8.7.2.2*"},
+		{"bin/app-{EMPTY}-1.rpm", "bin/app-{UNSET:EMPTY}-1.rpm"}, // empty value: never-matching marker
+		{"bin/app-{UNSET}.rpm", "bin/app-{UNSET:UNSET}.rpm"},     // unset: never-matching marker
+		{"bin/jobarranger_server-{VERSION}-8-{VERSION}*", "bin/jobarranger_server-7.2.2-8-7.2.2*"},
 		{"bin/{installer}*.rpm", "bin/{installer}*.rpm"},               // built-ins untouched
 		{"bin/{Installer}-{VERSION}.rpm", "bin/{Installer}-7.2.2.rpm"}, // mixed case: not a var
 		{"bin/plain*.rpm", "bin/plain*.rpm"},                           // no tokens at all
@@ -48,9 +49,10 @@ installers:
 	}
 }
 
-// Unset/empty variable substitutes as "" — the glob decides; common shapes
-// yield the well-defined "matched no files" load error. The error shows the
-// substituted pattern (typo visibility).
+// Unset or empty variable substitutes the never-matching {UNSET:NAME} marker
+// — the pattern matches nothing and the existing "matched no files" load
+// error fires, showing the marker ("act like there is no installer file",
+// v3.3). A typo'd variable name behaves the same and is visible in the error.
 func TestLoadUnsetVariableNoMatch(t *testing.T) {
 	files := map[string]string{
 		"bin/pkg-7.2.2-1.el8.x86_64.rpm": "",
@@ -66,15 +68,48 @@ installers:
 	if err == nil || !strings.Contains(err.Error(), "matched no files") {
 		t.Fatalf("expected matched-no-files error for unset variable, got %v", err)
 	}
-	if !strings.Contains(err.Error(), `bin/pkg--1.el8.x86_64.rpm`) {
-		t.Errorf("error should show the substituted pattern, got %v", err)
+	if !strings.Contains(err.Error(), `{UNSET:VERSION}`) {
+		t.Errorf("error should show the {UNSET:VERSION} marker, got %v", err)
 	}
-	// A typo'd variable name behaves the same way.
-	cfgErr := strings.ReplaceAll(files["configs/test.yaml"], "{VERSION}", "{VRSION}")
-	files["configs/test.yaml"] = cfgErr
+
+	// An explicitly empty --var value is exactly like no value at all.
+	_, err = LoadBundle("configs/test.yaml", map[string]string{"VERSION": ""})
+	if err == nil || !strings.Contains(err.Error(), "matched no files") ||
+		!strings.Contains(err.Error(), `{UNSET:VERSION}`) {
+		t.Fatalf("empty --var value must behave like unset, got %v", err)
+	}
+
+	// A typo'd variable name behaves the same way and is visible in the error.
+	files["configs/test.yaml"] = strings.ReplaceAll(files["configs/test.yaml"], "{VERSION}", "{VRSION}")
 	writeTestFiles(t, files)
-	if _, err := LoadBundle("configs/test.yaml", nil); err == nil || !strings.Contains(err.Error(), "matched no files") {
-		t.Fatalf("expected matched-no-files error for typo variable, got %v", err)
+	_, err = LoadBundle("configs/test.yaml", nil)
+	if err == nil || !strings.Contains(err.Error(), "matched no files") ||
+		!strings.Contains(err.Error(), `{UNSET:VRSION}`) {
+		t.Fatalf("expected matched-no-files error showing the typo name, got %v", err)
+	}
+}
+
+// Regression test for the motivating v3.3 case: a wildcard right after the
+// token ("...-{VERSION}*el9*.rpm") must NOT silently widen an unset variable
+// to all versions — it matches nothing and the config is rejected (v3.2
+// resolved both version files here).
+func TestUnsetVariableNeverWidensToAllVersions(t *testing.T) {
+	writeTestFiles(t, map[string]string{
+		"bin/pkg-7.2.1-1.el9.x86_64.rpm": "",
+		"bin/pkg-7.2.2-1.el9.x86_64.rpm": "",
+		"configs/test.yaml": `
+environment:
+  image: test:latest
+installers:
+  - pattern: "bin/pkg-{VERSION}*el9*.rpm"
+`,
+	})
+	_, err := LoadBundle("configs/test.yaml", nil)
+	if err == nil || !strings.Contains(err.Error(), "matched no files") {
+		t.Fatalf("unset variable must match nothing (v3.2 silently matched both files here), got %v", err)
+	}
+	if !strings.Contains(err.Error(), `{UNSET:VERSION}`) {
+		t.Errorf("error should show the {UNSET:VERSION} marker, got %v", err)
 	}
 }
 

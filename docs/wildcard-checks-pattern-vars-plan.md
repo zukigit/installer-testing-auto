@@ -1,9 +1,18 @@
 # Wildcard Check Paths & Pattern Variables Plan (v3.2) — glob `must_exist`/`must_not_exist` + `{VAR}` in installer patterns
 
-> Status: **IMPLEMENTED** (confirmed decisions: variables in **patterns only**,
-> unset/empty variable -> `""` -> the glob decides, `--var` flag only with no
-> prompting, no scope guard — `{VAR}` elsewhere is literal text, glob checks
-> accept files and directories, no report/`list` output changes).
+> Status: **IMPLEMENTED** as of v3.3 — see the amendment below.
+> (Confirmed decisions: variables in **patterns only**, unset/empty variable
+> substituted `""`, `--var` flag only with no prompting, no scope guard —
+> `{VAR}` elsewhere is literal text, glob checks accept files and
+> directories, no report/`list` output changes.)
+>
+> **AMENDED by** `docs/pattern-vars-unset-no-match-plan.md` **(v3.3)**:
+> an unset (or explicitly empty, `--var NAME=`) variable no longer
+> substitutes the empty string — it substitutes the never-matching marker
+> `{UNSET:NAME}`, so the pattern matches nothing and the existing
+> "pattern matched no files" load error fires. Superseded here: decision 10
+> and the §4 error-table row "{VERSION} empty but the pattern still matches
+> files (e.g. a trailing `*` absorbs it)". All other v3.2 decisions survive.
 > Baseline: the implemented v3.1 design (see `docs/shared-checks-presets-plan.md`,
 > `docs/upgrade-task-plan.md`, `docs/container-per-task-plan.md`).
 > Scope: **two independent features** — (A) wildcard support in file checks,

@@ -255,10 +255,11 @@ installers:
 ```
 
 - A variable **not provided** (or provided empty, `--var VERSION=`)
-  substitutes as the empty string — the resulting pattern matches no files
-  and the regular "pattern matched no files" load error fires. No prompting.
-- A typical subrange pattern (`...-{VERSION}*el8*.rpm`) with an empty value
-  still matches *all* versions: the glob decides, there is no special case.
+  substitutes a never-matching marker (`{UNSET:VERSION}`) — the pattern
+  matches no files and the regular "pattern matched no files" load error
+  fires. No prompting, and an unset variable never silently widens to all
+  versions: even `...-{VERSION}*el9*.rpm` matches **nothing** without a
+  `--var` ("no value = no version").
 - Variables substitute **in installer patterns only**. A `{VAR}` left in a
   check path or command is literal text (a `must_exist` path with a literal
   `{VAR}` acts like a path that does not exist).

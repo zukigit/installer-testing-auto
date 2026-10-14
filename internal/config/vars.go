@@ -19,16 +19,30 @@ func ValidVarName(name string) bool {
 // varTokenRe matches one {NAME} token in a pattern string.
 var varTokenRe = regexp.MustCompile(`\{[A-Z][A-Z0-9_]*\}`)
 
-// Substitute replaces every {NAME} token in the pattern with vars[NAME],
-// defaulting to the empty string for names no --var provides (unset/empty
-// variables are not errors: the resulting pattern simply matches nothing —
-// the existing "pattern matched no files" load error decides). Substitution
-// is literal; the value participates in the glob like any other text.
+// unsetMarker returns the literal substituted for an unset (or empty)
+// {NAME}: e.g. "VERSION" -> "{UNSET:VERSION}". It never appears in real
+// installer file names and contains no glob metachars, so the pattern the
+// marker ends up in matches nothing — an unset variable can never silently
+// widen to "all versions" (v3.3). The colon keeps it outside the variable
+// name syntax, so the marker is never re-matched by the substitution
+// pattern, and the reused "matched no files" load error reads as
+// "VERSION was not set".
+func unsetMarker(name string) string {
+	return "{UNSET:" + name + "}"
+}
+
+// Substitute replaces every {NAME} token in the pattern with vars[NAME]. A
+// name no --var provides — or provided empty — substitutes the
+// never-matching marker: the resulting pattern matches no files and the
+// existing "pattern matched no files" load error fires ("act like there is
+// no installer file", v3.3). Provided non-empty values substitute
+// literally; the value participates in the glob like any other text.
 func Substitute(pattern string, vars map[string]string) string {
 	return varTokenRe.ReplaceAllStringFunc(pattern, func(token string) string {
-		if v, ok := vars[token[1:len(token)-1]]; ok {
+		name := token[1 : len(token)-1]
+		if v, ok := vars[name]; ok && v != "" {
 			return v
 		}
-		return ""
+		return unsetMarker(name)
 	})
 }

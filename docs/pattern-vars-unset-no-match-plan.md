@@ -1,8 +1,8 @@
 # Pattern Variables Unset No-Match Plan (v3.3) — remove the implicit all-versions default
 
-> Status: **CONFIRMED — ready to implement, not yet implemented** (user direction:
-> "remove default version"; "user not input version with flag → jobarg-redhat-9.yaml
-> is accepting → just act like there is no installer file").
+> Status: **IMPLEMENTED** (user-directed behavior: "remove default version";
+> "user not input version with flag → jobarg-redhat-9.yaml is accepting →
+> just act like there is no installer file").
 > Baseline: the implemented v3.2 (`docs/wildcard-checks-pattern-vars-plan.md`).
 > Scope: **one behavior change** — what an unset (or empty) pattern variable
 > substitutes. No new keys, no CLI changes, no event/report/check changes.
