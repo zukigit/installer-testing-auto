@@ -160,7 +160,7 @@ Worked example — local `upgrade_checks` on top of a preset:
 ```yaml
 presets: configs/shared/presets.yaml
 installers:
-  - pattern: "bin/jobarranger-server-{VERSION}*ubuntu22.04*.deb"
+  - pattern: "bin/jobarranger-server_{VERSION}*ubuntu22.04*.deb"
     use_preset: server-deb
     upgrade_checks:                   # local -> replaces the preset's upgrade block
       must_exist:

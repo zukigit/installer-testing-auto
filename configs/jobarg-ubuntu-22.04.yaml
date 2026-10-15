@@ -8,14 +8,14 @@ environment:
   image: docker.io/zukidocker/solar:ubuntu22.04
 
 installers:
-  - pattern: "bin/jobarranger-server-{VERSION}*ubuntu22.04*.deb"
+  - pattern: "bin/jobarranger-server_{VERSION}*ubuntu22.04*.deb"
     use_preset: server-deb
 
-  - pattern: "bin/jobarranger-agentd-{VERSION}*ubuntu22.04*.deb"
+  - pattern: "bin/jobarranger-agentd_{VERSION}*ubuntu22.04*.deb"
     use_preset: agentd-deb
 
-  - pattern: "bin/jobarranger-manager-{VERSION}*ubuntu22.04*.deb"
+  - pattern: "bin/jobarranger-manager_{VERSION}*ubuntu22.04*.deb"
     use_preset: manager-deb
 
-  - pattern: "bin/jobarranger-utils-{VERSION}*ubuntu22.04*.deb"
+  - pattern: "bin/jobarranger-utils_{VERSION}*ubuntu22.04*.deb"
     use_preset: utils
