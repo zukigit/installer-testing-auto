@@ -1,8 +1,12 @@
 package report
 
 import (
+	"io"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/zukigit/installer-testing-auto/internal/config"
 )
 
 // Sample log: fresh-install of a.rpm passes (copy+install steps, 2 checks);
@@ -260,4 +264,83 @@ func TestCheckSectionTitle(t *testing.T) {
 			t.Errorf("checkSectionTitle(%q) = %q, want %q", task, got, want)
 		}
 	}
+}
+
+// ListBundle shows the resolved upgrade command and upgrade_checks next to
+// install/uninstall (v3.5): commands are placeholder-expanded, the checks
+// line is the same counts summary as the other blocks and is omitted when
+// the block is nil. An empty upgrade command prints an empty line (e.g. a
+// .sh entry without upgrade_command — the run would fail in setup).
+func TestListBundle(t *testing.T) {
+	bundle := func(upgradeChecks *config.Checks) *config.Bundle {
+		return &config.Bundle{
+			Path:   "configs/test.yaml",
+			Config: &config.Config{Environment: config.EnvironmentSpec{Name: "test-9", Type: "docker", Image: "test:9", Workdir: "/tmp"}},
+			Installers: []*config.ResolvedInstaller{{
+				LocalPath:       "bin/myapp-1.2.3-1.el9.x86_64.rpm",
+				ContainerPath:   "/tmp/myapp-1.2.3-1.el9.x86_64.rpm",
+				Basename:        "myapp-1.2.3-1.el9.x86_64.rpm",
+				PackageName:     "myapp",
+				InstallCmd:      "rpm -ivh {installer}",
+				UninstallCmd:    "rpm -e {package}",
+				UpgradeCmd:      "echo new >> /etc/myapp.conf && rpm -Uvh {installer}",
+				InstallChecks:   &config.Checks{MustExist: []string{"/a", "/b"}, Commands: []config.CommandCheck{{}}},
+				UninstallChecks: &config.Checks{MustNotExist: []string{"/a", "/b", "/c"}},
+				UpgradeChecks:   upgradeChecks,
+			}},
+		}
+	}
+
+	withChecks := bundle(&config.Checks{MustExist: []string{"/etc/myapp.conf", "/etc/myapp.conf.rpmnew", "/db/upgrade"}})
+	out := captureStdout(t, func() { ListBundle(withChecks) })
+	for _, want := range []string{
+		"    install:      rpm -ivh /tmp/myapp-1.2.3-1.el9.x86_64.rpm\n",
+		"    uninstall:    rpm -e myapp\n",
+		"    upgrade:      echo new >> /etc/myapp.conf && rpm -Uvh /tmp/myapp-1.2.3-1.el9.x86_64.rpm\n",
+		"    install_checks:  must_exist=2 must_not_exist=0 commands=1\n",
+		"    uninstall_checks: must_exist=0 must_not_exist=3 commands=0\n",
+		"    upgrade_checks:   must_exist=3 must_not_exist=0 commands=0\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list output missing %q\noutput:\n%s", want, out)
+		}
+	}
+
+	// nil upgrade_checks: the line is omitted, everything else unchanged
+	out = captureStdout(t, func() { ListBundle(bundle(nil)) })
+	if strings.Contains(out, "upgrade_checks:") {
+		t.Errorf("nil upgrade_checks must omit the line\noutput:\n%s", out)
+	}
+	if !strings.Contains(out, "uninstall_checks: must_exist=0 must_not_exist=3 commands=0\n") {
+		t.Errorf("nil upgrade_checks must not affect the other lines\noutput:\n%s", out)
+	}
+
+	// empty upgrade command (a .sh entry without upgrade_command): empty line
+	emptyCmd := bundle(nil)
+	emptyCmd.Installers[0].Basename = "myapp.sh"
+	emptyCmd.Installers[0].UpgradeCmd = ""
+	out = captureStdout(t, func() { ListBundle(emptyCmd) })
+	if !strings.Contains(out, "    upgrade:      \n") {
+		t.Errorf("empty UpgradeCmd must print an empty line\noutput:\n%q", out)
+	}
+}
+
+// captureStdout runs fn with os.Stdout swapped for a pipe and returns what
+// it printed (ListBundle prints to stdout directly).
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	fn()
+	os.Stdout = old
+	w.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
 }

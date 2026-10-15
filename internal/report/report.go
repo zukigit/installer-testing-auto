@@ -36,12 +36,17 @@ func ListBundle(b *config.Bundle) {
 		fmt.Printf("    in-container: %s\n", ri.ContainerPath)
 		fmt.Printf("    install:      %s\n", ri.Expand(ri.InstallCmd))
 		fmt.Printf("    uninstall:    %s\n", ri.Expand(ri.UninstallCmd))
+		fmt.Printf("    upgrade:      %s\n", ri.Expand(ri.UpgradeCmd))
 		if c := ri.InstallChecks; c != nil {
 			fmt.Printf("    install_checks:  must_exist=%d must_not_exist=%d commands=%d\n",
 				len(c.MustExist), len(c.MustNotExist), len(c.Commands))
 		}
 		if c := ri.UninstallChecks; c != nil {
 			fmt.Printf("    uninstall_checks: must_exist=%d must_not_exist=%d commands=%d\n",
+				len(c.MustExist), len(c.MustNotExist), len(c.Commands))
+		}
+		if c := ri.UpgradeChecks; c != nil {
+			fmt.Printf("    upgrade_checks:   must_exist=%d must_not_exist=%d commands=%d\n",
 				len(c.MustExist), len(c.MustNotExist), len(c.Commands))
 		}
 	}

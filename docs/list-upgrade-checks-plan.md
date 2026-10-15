@@ -1,6 +1,6 @@
 # List Upgrade Checks Plan (v3.5) — show the `upgrade` command and `upgrade_checks` in the `list` dry-run
 
-> Status: **CONFIRMED — ready to implement** (user-reported gap: "current
+> Status: **IMPLEMENTED** (user-reported gap: "current
 > list command is not showing upgrade_checks — we will add that").
 > Baseline: the implemented v3.4 (`docs/upgrade-pool-pattern-vars-plan.md`).
 > Scope: **one output addition** in the `list` dry-run — the resolved
