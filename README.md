@@ -96,7 +96,6 @@ installers:
     install_checks:
       commands:
         - command: "dpkg -s {package}"
-```
     uninstall_checks:
       commands:
         - command: "dpkg -s {package}"
