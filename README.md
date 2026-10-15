@@ -138,7 +138,9 @@ The `upgrade` task needs installer file names carrying versions:
 `.rpm`: `name-VERSION-release[.arch].rpm`).
 
 - For each installer, the tool finds every **older** version of the same
-  package from the config's full resolved list and creates one upgrade case
+  package from the config's **upgrade pool** — the resolved package list
+  **plus** every older version of the same package discoverable by widening
+  the pattern variables (`{VAR}` → `*`) — and creates one upgrade case
   per pair: install the old version (setup) → run `upgrade_command` →
   run `upgrade_checks`.
 - Version ordering: MAJOR.MINOR.PATCH compared numerically; then the suffix —
@@ -254,6 +256,11 @@ installers:
 ./installer-test-exec list --config configs/rocky-9.yaml --var VERSION=7.2.2
 ```
 
+- Variables pin the **target list only**: the `upgrade` task still pairs
+  from older versions of the same package found via the widened pattern, so
+  `run --var VERSION=0.2.0` performs the `0.1.0 -> 0.2.0` upgrade whenever
+  `myapp-0.1.0-1.rpm` (or any older version of the same package) exists in
+  `bin/` — see [Upgrade pairing](#upgrade-pairing).
 - A variable **not provided** (or provided empty, `--var VERSION=`)
   substitutes a never-matching marker (`{UNSET:VERSION}`) — the pattern
   matches no files and the regular "pattern matched no files" load error

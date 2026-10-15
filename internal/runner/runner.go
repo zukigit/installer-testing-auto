@@ -32,7 +32,9 @@ type Options struct {
 	// Installer is an optional glob filtering the package list (e.g. "bin/my-app-*.rpm").
 	Installer string
 	// Vars are the pattern variables (--var NAME=VALUE) substituted into
-	// installer patterns at load time (v3.2). Unset names substitute as "".
+	// installer patterns at load time (v3.2). Unset names substitute the
+	// never-matching {UNSET:NAME} marker (v3.3); provided values also widen
+	// to "*" in the upgrade-pairing pool pattern (v3.4).
 	Vars map[string]string
 	// Parallel is the global max number of simultaneously running cases/containers.
 	Parallel int
@@ -176,7 +178,7 @@ func buildQueue(paths []string, opts Options, log *logging.Emitter) ([]caseDef, 
 					continue
 				}
 				if t.Name() == task.UpgradeName {
-					buildUpgradeCases(b, ri, allInstallers(b), inScope, upgradeSelected, &cases, &skips, info)
+					buildUpgradeCases(b, ri, upgradePool(b), inScope, upgradeSelected, &cases, &skips, info)
 					continue
 				}
 				if !inScope {
@@ -190,9 +192,18 @@ func buildQueue(paths []string, opts Options, log *logging.Emitter) ([]caseDef, 
 	return cases, envs, skips, configErrors
 }
 
-// allInstallers is the whole resolved package list of a config — the
-// old-version pool for upgrade pairing (confirmed decision).
-func allInstallers(b *config.Bundle) []*config.ResolvedInstaller { return b.Installers }
+// upgradePool is the whole-config old-version pool for upgrade pairing —
+// the resolved package list widened past pattern-variable pinning (v3.4, see
+// docs/upgrade-pool-pattern-vars-plan.md: each installer entry also globs its
+// pattern with provided variables as "*", so older versions in bin/ still
+// pair even when --var pins one version). Hand-built bundles (tests) fall
+// back to the resolved list.
+func upgradePool(b *config.Bundle) []*config.ResolvedInstaller {
+	if b.UpgradePool != nil {
+		return b.UpgradePool
+	}
+	return b.Installers
+}
 
 // buildUpgradeCases resolves one installer's upgrade participation:
 // skip events (no older version / non-standard version) or one case per older
@@ -205,7 +216,7 @@ func buildUpgradeCases(b *config.Bundle, ri *config.ResolvedInstaller, pool []*c
 	if _, ok := config.ParseVersion(ri.Version); ok {
 		aMtime := fileMtime(ri.LocalPath)
 		for _, o := range pool {
-			if o == ri || o.PackageName != ri.PackageName {
+			if o == ri || o.LocalPath == ri.LocalPath || o.PackageName != ri.PackageName {
 				continue
 			}
 			if _, ok := config.ParseVersion(o.Version); !ok {

@@ -1,6 +1,6 @@
 # Upgrade Pool vs Pattern Variables Plan (v3.4) — widen `{VAR}` to `*` for the upgrade-pairing pool
 
-> Status: **CONFIRMED — ready to implement** (user-reported bug: "for the
+> Status: **IMPLEMENTED** (user-reported bug: "for the
 > upgrade task perspective, even though the variable is 0.2.0, the upgrade
 > task should be done if the older versions exist in bin").
 > Baseline: the implemented v3.3 (`docs/pattern-vars-unset-no-match-plan.md`),

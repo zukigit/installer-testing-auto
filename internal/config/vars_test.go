@@ -113,6 +113,31 @@ installers:
 	}
 }
 
+// widenPattern (v3.4) builds the upgrade-pairing pool pattern from the same
+// pattern: tokens with provided non-empty values widen to "*" (past --var
+// pinning), unset/empty keep the {UNSET:NAME} marker, lowercase built-ins and
+// plain text are untouched.
+func TestWidenPattern(t *testing.T) {
+	vars := map[string]string{"VERSION": "7.2.2", "EMPTY": ""}
+	cases := []struct{ pattern, want string }{
+		// a "*" right after the token yields a double star — filepath.Match
+		// treats consecutive stars like a single one, so the match set is what
+		// the plan's "widen to *" rule intends
+		{"bin/jobarranger-server-{VERSION}*el8*.rpm", "bin/jobarranger-server-**el8*.rpm"},
+		{"bin/pkg-{VERSION}.rpm", "bin/pkg-*.rpm"},
+		{"bin/jobarranger_server-{VERSION}-8-{VERSION}*", "bin/jobarranger_server-*-8-**"},
+		{"bin/app-{EMPTY}-1.rpm", "bin/app-{UNSET:EMPTY}-1.rpm"}, // empty value: marker
+		{"bin/app-{UNSET}.rpm", "bin/app-{UNSET:UNSET}.rpm"},     // unset: marker
+		{"bin/{installer}*.rpm", "bin/{installer}*.rpm"},         // built-ins untouched
+		{"bin/plain*.rpm", "bin/plain*.rpm"},                     // no tokens at all
+	}
+	for _, c := range cases {
+		if got := widenPattern(c.pattern, vars); got != c.want {
+			t.Errorf("widenPattern(%q) = %q, want %q", c.pattern, got, c.want)
+		}
+	}
+}
+
 // Lowercase built-in placeholders in a pattern are literal text and match
 // nothing (no special error path).
 func TestLoadLowercaseBuiltInInPatternNoMatch(t *testing.T) {

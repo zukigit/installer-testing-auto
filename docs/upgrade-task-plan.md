@@ -50,9 +50,16 @@ myapp-0.1.2-1.rpm     -> older: 0.1.1-1, 0.1.1-2 -> upgrade cases:
 - **Created date:** the file's modification timestamp (`os.Stat` mtime) is the
   portable "created date" on Linux. Caveat: copying/moving a file can refresh
   its mtime — dates only matter for same-version non-numeric suffix ties.
-- **Old-version pool:** the config's full resolved package list (all installer
+- **Old-version pool:** the config's full resolved list (all installer
   entries). `--installer GLOB` filters which **new** installers get upgrade
   cases, but the pool of available old versions is always the full list.
+  > **Amendment (v3.4):** superseded by
+  > `docs/upgrade-pool-pattern-vars-plan.md` — since v3.2 the resolved list is
+  > pinned by pattern variables, so the pool is now the resolved list
+  > **widened past variable pinning**: each installer entry also globs its
+  > pattern with every provided `{VAR}` replaced by `*`, letting the upgrade
+  > task pair from older versions of the same package in `bin/` even when
+  > `--var VERSION=0.2.0` pins the target list.
 - Upgrade cases exist per environment like other tasks (same config image).
 
 ## 3. Case lifecycle (own container, per pair)

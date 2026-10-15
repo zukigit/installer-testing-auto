@@ -12,6 +12,15 @@ type Bundle struct {
 	Path       string               `json:"-" yaml:"-"`
 	Config     *Config              `json:"-" yaml:"-"`
 	Installers []*ResolvedInstaller `json:"-" yaml:"-"`
+
+	// UpgradePool is the old-version pool for the upgrade task (v3.4): the
+	// resolved list widened past pattern-variable pinning — each installer
+	// entry also globs its pattern with every provided {VAR} replaced by
+	// "*", so older versions of the same package in bin/ still pair even
+	// when --var pins one version. Pinned installers appear as the same
+	// pointers, then path-deduplicated extras; extras are from-candidates
+	// only, never targets.
+	UpgradePool []*ResolvedInstaller `json:"-" yaml:"-"`
 }
 
 // EnvName returns the configured environment name, falling back to the
@@ -60,6 +69,9 @@ func (c *Config) Resolve(path string) (*Bundle, error) {
 		workdir = DefaultWorkdir
 		c.Environment.Workdir = workdir // write the default back so list output shows it
 	}
+	poolSeen := map[string]bool{}
+	// Pass 1: the pinned list drives the case matrix (unchanged) and starts
+	// the upgrade pool as the same pointers, deduplicated by path.
 	for i, spec := range c.Installers {
 		matches, err := filepath.Glob(spec.Pattern)
 		if err != nil {
@@ -74,6 +86,35 @@ func (c *Config) Resolve(path string) (*Bundle, error) {
 				return nil, fmt.Errorf("installers[%d]: %w", i, err)
 			}
 			b.Installers = append(b.Installers, ri)
+			if !poolSeen[local] {
+				poolSeen[local] = true
+				b.UpgradePool = append(b.UpgradePool, ri)
+			}
+		}
+	}
+	// Pass 2 (v3.4): widen each entry's pattern past variable pinning and add
+	// every additionally matched file to the upgrade pool as a from-candidate
+	// only — never a target. Best-effort: the widened pattern is always a
+	// superset of the pinned one, so a glob error or zero extras can never
+	// invalidate the config.
+	for _, spec := range c.Installers {
+		if spec.poolPattern == "" || spec.poolPattern == spec.Pattern {
+			continue
+		}
+		extras, err := filepath.Glob(spec.poolPattern)
+		if err != nil {
+			continue
+		}
+		for _, local := range extras {
+			if poolSeen[local] {
+				continue
+			}
+			ri, err := resolveInstaller(spec, local, workdir)
+			if err != nil {
+				continue
+			}
+			poolSeen[local] = true
+			b.UpgradePool = append(b.UpgradePool, ri)
 		}
 	}
 	return b, nil

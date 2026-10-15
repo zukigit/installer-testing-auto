@@ -52,6 +52,11 @@ type InstallerSpec struct {
 	InstallChecks    *Checks `yaml:"install_checks"`
 	UninstallChecks  *Checks `yaml:"uninstall_checks"`
 	UpgradeChecks    *Checks `yaml:"upgrade_checks"`
+
+	// poolPattern is the post-substitution pattern widened past variable
+	// pinning (v3.4): each provided {VAR} replaced by "*". It drives the
+	// upgrade-pairing pool — see Bundle.UpgradePool — and is never YAML.
+	poolPattern string
 }
 
 // Config is the top level of one YAML config file.
@@ -74,7 +79,10 @@ func Load(path string, vars map[string]string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	for i := range cfg.Installers {
-		cfg.Installers[i].Pattern = Substitute(cfg.Installers[i].Pattern, vars)
+		raw := cfg.Installers[i].Pattern
+		// v3.4: widenPattern must see the raw token, not the substituted value.
+		cfg.Installers[i].poolPattern = widenPattern(raw, vars)
+		cfg.Installers[i].Pattern = Substitute(raw, vars)
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config %s: %w", path, err)

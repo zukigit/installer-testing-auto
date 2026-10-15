@@ -46,3 +46,22 @@ func Substitute(pattern string, vars map[string]string) string {
 		return unsetMarker(name)
 	})
 }
+
+// widenPattern builds the upgrade-pairing pool pattern from the same pattern
+// (v3.4): every {NAME} token with a provided non-empty value substitutes "*"
+// instead of the value, so the pool reaches every version the pattern can
+// match — the upgrade task still pairs from the older versions in bin/ even
+// when --var pins one version for testing. Unset or empty names keep the
+// {UNSET:NAME} marker (same rule as Substitute). Since "*" matches any
+// string — including the pinned value — the widened match set is always a
+// superset of the pinned one: the pool glob can never fail when the pinned
+// glob succeeded.
+func widenPattern(pattern string, vars map[string]string) string {
+	return varTokenRe.ReplaceAllStringFunc(pattern, func(token string) string {
+		name := token[1 : len(token)-1]
+		if v, ok := vars[name]; ok && v != "" {
+			return "*"
+		}
+		return unsetMarker(name)
+	})
+}
