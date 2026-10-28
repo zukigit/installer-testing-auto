@@ -81,7 +81,7 @@ below** it:
 | `internal/config/config.go` `validateGlobPaths` | POSIX-shell-safe charset (because globs are passed **unquoted** to `sh`) |
 | `internal/config/resolve.go` `default*Cmd`, `derivePackage` | `.deb` / `.rpm` / `.sh` only |
 | `internal/config/version.go` `ExtractVersionFromFilename` | `.deb` / `.rpm` only → every `.msi` would be `nonstandard_version` (upgrade always skipped) |
-| testcontainers-go | Ryuk reaper (`testcontainers/ryuk`, a **Linux** image) is started by default; `CopyFileToContainer` builds a tar whose entry name is the **full container path** and extracts it at `/` (`vendor/.../testcontainers-go/docker.go` `copyToContainer`, `file.go` `tarFile`) — `C:\ita\x.msi` as a tar entry name is not a valid Windows extraction target |
+| testcontainers-go (used by `DockerEnvironment`) | Ryuk reaper (`testcontainers/ryuk`, a **Linux** image) is started before the first container; `CopyFileToContainer` builds a tar whose entry name is the **full container path** and extracts it at `/` (`vendor/.../testcontainers-go/docker.go` `copyToContainer`, `file.go` `tarFile`) — `C:\ita\x.msi` as a tar entry name is not a valid Windows extraction target. → Windows environments don't use it (§3.1) |
 
 Nothing in `runner`, `logging`, `report` (rendering) or the presets/vars code
 depends on the container OS — those stay as they are apart from small
@@ -96,7 +96,7 @@ implementation detail below; record the results in this doc (§14).
 |---|---|---|---|
 | S1 | Engine + image work, process isolation | `docker run --rm --isolation process mcr.microsoft.com/windows/servercore:ltsc2022 cmd /c ver` | host/image pairing, §4.3 |
 | S2 | Keep-alive command | `docker run -d ... powershell -NoProfile -Command "while ($true) { Start-Sleep 3600 }"` then `docker exec` | §6.1 |
-| S3 | Copy into a **running** container | `docker cp x.msi <ctr>:C:\ita\x.msi`, and via the API path testcontainers uses (tar entry `ita/x.msi`, destination `/`) | §6.2 |
+| S3 | Copy into a **running** container | `docker cp x.msi <ctr>:C:\ita\x.msi` (same API call §6.2 uses) | §6.2 |
 | S4 | The installer installs silently in Server Core | `Start-Process msiexec -ArgumentList '/i C:\ita\x.msi /qn /norestart /l*v C:\ita\x.log' -Wait -PassThru` → `ExitCode` 0 / 3010 | that option A is viable at all |
 | S5 | Exit-code propagation through `docker exec powershell -Command` | `exit 7`, a failing native exe, a failing cmdlet | §5.2 wrapper |
 | S6 | Native stderr under `docker exec` (PS 5.1) is passed through, not turned into error records | `cmd /c "echo err 1>&2"` | §5.2 wrapper |
@@ -104,9 +104,34 @@ implementation detail below; record the results in this doc (§14).
 | S8 | Hidden files and registry paths with `Get-Item -Force` / `Test-Path` | `Test-Path 'HKLM:\SOFTWARE\Microsoft'` | §7 |
 | S9 | Container stop/remove time | `docker rm -f` timing | expectations only |
 
-If S3 or S4 fails, stop and revisit (S3 → copy via a bind-mounted folder
-instead; S4 → the installer needs the full `windows/server` image — a
-config-only change, or a VM environment — out of scope).
+If S4 fails, stop and revisit (the installer needs the full `windows/server`
+image — a config-only change — or a VM environment, out of scope).
+
+### 3.1 Why Windows does not use testcontainers-go
+
+testcontainers-go **does not officially support Windows containers** (its own
+source: "This function does not consider Windows containers at the moment",
+`testcontainers.go`, `internal/core/docker_host.go`). Making it work would
+need three workarounds, each a source of surprises:
+
+- **Ryuk**: the reaper is a Linux image, started *before* the first
+  container; on a Windows engine it can never run, so every case would fail
+  unless `TESTCONTAINERS_RYUK_DISABLED=true` is set — and testcontainers reads
+  that setting once per process, so it must be set before any other
+  testcontainers call.
+- **Copy**: `CopyFileToContainer` tars the file under the full container path
+  and extracts at `/`, so `C:\ita\x.msi` must be rewritten to `/ita/x.msi`,
+  limiting the workdir to drive `C:`.
+- **Unknowns**: anything else in the library that assumes Linux.
+
+The tool only needs five operations (create+start, copy, exec, remove,
+container ID), which the plain Docker client
+(`github.com/moby/moby/client`, already vendored as a testcontainers
+dependency) provides directly. **Decision: Windows environments use the
+Docker client directly** (§6); Linux environments keep testcontainers-go
+unchanged. No Ryuk switch, no path rewriting, no library behavior to work
+around — and the `Environment` interface keeps the choice inside
+`internal/env`.
 
 ## 4. Configuration changes
 
@@ -115,7 +140,7 @@ config-only change, or a VM environment — out of scope).
 | Value | Meaning |
 |---|---|
 | `linux` (default) | today's behavior — POSIX shell dialect, `/tmp` workdir |
-| `windows` | PowerShell dialect, `C:\ita` workdir, MSI defaults, Ryuk off (§6.4) |
+| `windows` | PowerShell dialect, `C:\ita` workdir, MSI defaults, Docker-client environment (§6) |
 
 Unknown values are a load error. `type` stays `docker`: the OS is a property
 of the **environment**, the type is the **provisioning mechanism** (a future
@@ -124,9 +149,8 @@ of the **environment**, the type is the **provisioning mechanism** (a future
 ### 4.2 `environment.workdir`
 
 Default becomes OS-dependent: `/tmp` (linux) / `C:\ita` (windows). For
-`os: windows` the workdir must match `^[A-Za-z]:\\` and, for v4, must be on
-drive `C:` (the copy mechanism extracts relative to the container root —
-§6.2). Forward slashes in a Windows workdir are normalized to `\`.
+`os: windows` the workdir must be an absolute Windows path (`^[A-Za-z]:\\`,
+any drive the image has — §6.2). Forward slashes in a Windows workdir are normalized to `\`.
 
 ### 4.3 `environment.isolation` (new, optional, windows only)
 
@@ -196,8 +220,8 @@ type Environment interface {
 }
 ```
 
-The Docker environment returns `shell.POSIX` or `shell.PowerShell` from
-`env.Options.OS`. A future WinRM/VM environment returns `shell.PowerShell`
+The Linux `DockerEnvironment` returns `shell.POSIX`; the Windows Docker
+environment (§6) returns `shell.PowerShell`. A future WinRM/VM environment returns `shell.PowerShell`
 and reuses everything in §5–§8.
 
 Call sites (`task/*.go`, `checks/checks.go`, `env/docker.go`) replace every
@@ -248,62 +272,77 @@ argv assertions in `internal/checks/checks_test.go`
 must pass **unmodified** after the refactor — that is the acceptance test for
 Phase 1.
 
-## 6. Docker environment changes (`internal/env/docker.go`)
+## 6. Windows Docker environment (`internal/env/docker_windows.go`)
 
-`env.Options` gains `OS` and `Isolation`.
+A new implementation of the existing `Environment` interface, built on the
+plain Docker client (§3.1). The file name describes its role (no build
+tag) — it compiles and unit-tests on Linux. The env factory selects it when
+`environment.os: windows` (`type: docker` stays the config value);
+`os: linux` keeps today's testcontainers-based `DockerEnvironment`, whose
+only change is `Shell()` returning `shell.POSIX` (§5.3).
+
+| `Environment` method | Docker client call(s) |
+|---|---|
+| `Start` | `ImagePull` when the image is missing → `ContainerCreate` (image, keep-alive cmd §6.1, `HostConfig.Isolation` §4.3, deterministic name, `ita` labels) → `ContainerStart` |
+| `Copy` | `MkdirAll` via `Exec` (§6.2) → `CopyToContainer` |
+| `Exec` | `ExecCreate` (stdout+stderr attached) → `ExecAttach` → `stdcopy.StdCopy` → `ExecInspect` for the exit code (§6.3) |
+| `Stop` | `ContainerRemove` with `Force: true` |
+| `Shell` | `shell.PowerShell` |
+| `ContainerID` | the created container's ID (for `case_start` / `--keep`) |
+
+The client is created once per run (`client.FromEnv`, API version
+negotiation) and shared by every Windows case; it talks to the local engine
+over its default `npipe:////./pipe/docker_engine` (or `DOCKER_HOST`).
+The struct depends on a small interface covering just the calls above, so
+unit tests use a fake client; integration testing happens on the Windows
+host only. ~150 lines.
 
 ### 6.1 Keep-alive
 
-| OS | `Cmd` |
-|---|---|
-| linux | `sleep infinity` (unchanged) |
-| windows | `powershell.exe -NoProfile -Command "while ($true) { Start-Sleep -Seconds 3600 }"` (spike S2) |
-
-`isolation` → `ContainerRequest.HostConfigModifier` sets `hc.Isolation`.
+`Cmd`: `powershell.exe -NoProfile -Command "while ($true) { Start-Sleep -Seconds 3600 }"`
+(spike S2). Linux keeps `sleep infinity`.
 
 ### 6.2 Copy
 
-1. `MkdirAll(dir)` via the dialect.
-2. testcontainers' `CopyFileToContainer` tars the file under the **full
-   container path** and extracts at `/`. For windows, pass the drive-less,
-   forward-slash form: `C:\ita\x.msi` → `/ita/x.msi` (extracts to
-   `C:\ita\x.msi` because `/` is `C:\` in the container). This is why v4
-   restricts the workdir to `C:` (§4.2). Spike S3 confirms; if the API path
-   misbehaves, fall back to a `docker cp`-equivalent `CopyToContainer` call
-   with `DestinationPath: "C:\\ita"` and a base-name-only tar entry.
-3. File mode (`0o755`) is ignored by Windows — harmless.
+1. `MkdirAll(dir)` via the PowerShell dialect.
+2. `CopyToContainer` with `DestinationPath: <workdir>` (e.g. `C:\ita`) and a
+   tar holding **one entry named by the base name** — the same mechanism as
+   `docker cp` (spike S3). The target directory is passed as a Windows path,
+   so any drive works (no `C:`-only restriction).
+3. File mode is irrelevant on Windows.
 
 ### 6.3 Exec output
 
-Windows output uses CRLF. `Exec` normalizes `\r\n` → `\n` for `os: windows`
-(so glob match splitting, `expected_stdout_contains`, and the report's
-stdout/stderr rendering behave as on Linux). Linux output is untouched.
+Windows output uses CRLF. `Exec` normalizes `\r\n` → `\n` (so glob match
+splitting, `expected_stdout_contains` and the report's stdout/stderr
+rendering behave as on Linux).
 
-### 6.4 Ryuk reaper
+### 6.4 Ryuk
 
-`testcontainers/ryuk` is a Linux image and cannot run on a Windows daemon.
-testcontainers-go reads `TESTCONTAINERS_RYUK_DISABLED` **once per process**
-(`internal/config` `sync.Once`), so the decision is made **before the first
-testcontainers call**: if any selected environment has `os: windows`, the
-runner sets `TESTCONTAINERS_RYUK_DISABLED=true` unless the user set the
-variable explicitly. The tool already terminates every container itself
-(`runCase` → `Stop` with `context.WithoutCancel`); only a hard kill of the
-tool can leak containers — they are named `ita-*`, so
-`docker ps -aq --filter name=ita- | % { docker rm -f $_ }` cleans up
-(documented in the README). `run_start` records `"ryuk": false` when
-disabled.
+Not involved. Windows cases never touch testcontainers-go, so the reaper is
+never started for them. On a Windows host, Linux environments are rejected
+by the preflight (§6.5) before any testcontainers call, so a mixed `--config`
+glob cannot start Ryuk on the Windows engine either. Without a reaper, only
+a hard kill of the tool can leak containers; they are named `ita-*` and
+labelled, so `docker ps -aq --filter name=ita- | % { docker rm -f $_ }`
+cleans up (README).
 
 ### 6.5 Daemon OS preflight
 
-A Windows daemon cannot run Linux images and vice versa, and the default
+A Windows engine cannot run Linux images and vice versa, and the default
 `--config configs/*.yaml` selects every environment. Before the queue runs,
-the runner asks the daemon for its `OSType` once (testcontainers Docker
-client `Info`) and compares it with each environment's `os`:
+the runner asks the daemon for its `OSType` once (plain Docker client,
+`Info`) and compares it with each environment's `os`:
 
 - mismatch → one `error` event per environment
   (`environment windows-2022 needs a windows Docker daemon; the daemon is linux`),
-  its cases are dropped, counted as a config error (exit code 1);
+  its cases and upgrade skips are dropped, counted as a config error (exit
+  code 1);
 - daemon unreachable → unchanged behavior (each case fails at `Start`).
+
+The preflight uses the plain client, not testcontainers: on a Windows host
+it must not be the call that makes testcontainers initialize (and try to
+start Ryuk).
 
 ## 7. Checks on Windows
 
@@ -426,11 +465,11 @@ still installed/uninstalled normally; only their upgrade case is skipped
 
 ## 9. Runner, logging, list, report
 
-- `runner`: Ryuk switch (§6.4), daemon preflight (§6.5), workdir fallback in
+- `runner`: daemon preflight (§6.5), workdir fallback in
   `envTracker` becomes OS-aware. Case matrix, pool, naming unchanged
   (container names are already sanitized to `[a-z0-9-]`).
 - `logging`: `env_start` gains `"os"` (omitted for linux → old logs and Linux
-  logs unchanged); `run_start` gains `"ryuk": false` only when disabled.
+  logs unchanged).
 - `list`: prints `os:` (and `isolation:` when set) under `type:`.
 - `report`: no rendering changes required — paths and commands are opaque
   strings. Optionally show `(windows)` next to the env header when `os` is
@@ -441,7 +480,7 @@ still installed/uninstalled normally; only their upgrade case is skipped
 
 - Cross-compile from the devcontainer:
   `GOOS=windows GOARCH=amd64 go build -mod=vendor -o installer-test-exec.exe ./cmd/installer-test`.
-- The binary runs on the Windows host; testcontainers-go finds the local
+- The binary runs on the Windows host; the Docker client finds the local
   engine via its default `npipe:////./pipe/docker_engine` (or `DOCKER_HOST`).
 - Host-side code already uses `filepath` for local paths (`bin/*.msi` globs
   work on Windows), and `syscall.SIGTERM` exists on Windows. `report`'s
@@ -457,14 +496,17 @@ still installed/uninstalled normally; only their upgrade case is skipped
 | `internal/shell/shell.go` (new) | `Dialect`, `POSIX`, `PowerShell` |
 | `internal/shell/shell_test.go` (new) | exact strings for both dialects, quoting edge cases (`'`, spaces, `[`) |
 | `internal/env/env.go` | `Shell()` on `Environment`; `Options.OS`, `Options.Isolation` |
-| `internal/env/docker.go` | dialect per OS, keep-alive, isolation, copy path mapping, CRLF normalization |
+| `internal/env/docker.go` | `Shell()` returns `shell.POSIX`; otherwise unchanged (Linux, testcontainers-go) |
+| `internal/env/docker_windows.go` (new) | Docker-client Windows environment (§6) + factory selection by `os` |
+| `internal/env/docker_windows_test.go` (new) | fake-client tests: create args (isolation, keep-alive, name), copy tar entry + destination, exec exit code + CRLF, remove |
+| `go.mod` | `github.com/moby/moby/client` moves from indirect to direct — already vendored, no new download |
 | `internal/task/install.go`, `uninstall.go`, `upgrade.go` | `e.Shell().Command(...)` |
 | `internal/checks/checks.go` | probes via dialect; drop local `quote` |
 | `internal/config/config.go` | `EnvironmentSpec.OS`, `.Isolation`; validation; OS-aware workdir default; glob charset only for linux |
 | `internal/config/resolve.go` | container-OS path join; `.msi`/`.ps1` defaults; generic package rule for windows envs (any extension except `.deb`/`.rpm`) |
 | `internal/config/version.go` | generic version rule for windows envs; OS parameter on `ExtractVersionFromFilename` |
-| `internal/runner/runner.go` | Ryuk switch, daemon preflight, pass OS/isolation to `env.Options` |
-| `internal/logging/logging.go` | `env_start.os`, `run_start.ryuk` |
+| `internal/runner/runner.go` | daemon preflight, pass OS/isolation to `env.Options` |
+| `internal/logging/logging.go` | `env_start.os` |
 | `internal/report/report.go` | `list` prints `os` / `isolation` |
 | test fakes (`task_test.go`, `checks_test.go`, `runner_test.go`) | fake env implements `Shell()`; new PowerShell-dialect cases |
 | `README.md` | Windows section (§11.1) |
@@ -478,7 +520,7 @@ PowerShell semantics of `command` and check paths (quoting, registry paths,
 `Start-Process -Wait` pitfall), `.msi` defaults and exit-code mapping, file
 naming rule for upgrades, silent-install command examples for `.exe`
 kinds (§8.1), a complete example Windows config + preset **as README text
-only** (the user copies it into `configs/`), Ryuk-off + manual cleanup command, image size and
+only** (the user copies it into `configs/`), manual cleanup command for leaked `ita-*` containers, image size and
 monthly-update note (pin dated tags like `ltsc2022-amd64-YYYYMMDD` for
 reproducible runs).
 
@@ -489,7 +531,7 @@ reproducible runs).
 | 0 | Spike §3 on the Windows host | S1–S9 recorded in §14 |
 | 1 | `internal/shell` + `Environment.Shell()`; tasks/checks/docker use the dialect; POSIX only | all existing tests pass **unmodified**; Linux run output identical |
 | 2 | Config: `os`, `isolation`, OS-aware workdir & container paths, windows glob validation | unit tests; `list` on a windows config shows `C:\ita\...` paths |
-| 3 | Docker env for windows: keep-alive, isolation, copy mapping, CRLF, Ryuk switch, daemon preflight | one `fresh-install` case passes on the Windows host (with a throwaway local config, not committed) |
+| 3 | `docker_windows.go` (§6): create/start with keep-alive + isolation, copy, exec + CRLF, remove; daemon preflight | one `fresh-install` case passes on the Windows host (with a throwaway local config, not committed) |
 | 4 | `.msi` / `.ps1` defaults, generic file-name package/version rule | unit tests pin §8.1/§8.2 tables; all three tasks pass for one MSI incl. one upgrade pair on the Windows host |
 | 5 | Logging/list tweaks, README, `GOOS=windows` build check | docs reviewed; `configs/` diff is empty; full run + report on the Windows host with the user's configs |
 
@@ -500,7 +542,9 @@ Each phase is independently mergeable; Phase 1 has zero user-visible change.
 - First-class `services:` check key (name → expected status / start type).
 - Batch all file probes of a check block into one PowerShell invocation.
 - `docker_host` per environment (one Linux-hosted run driving a remote
-  Windows daemon) — needs bypassing testcontainers' process-global config.
+  Windows daemon) — the Windows environment just gets a per-env client;
+  Linux envs on a remote host would still need testcontainers' process-global
+  host config solved.
 - VM / WinRM / SSH environment types for installers that need reboots,
   drivers or a desktop (they reuse the PowerShell dialect).
 
@@ -532,12 +576,14 @@ Overall: **implement the core system only, `configs/` stays untouched.**
 | D5 | `sh -c`-like exit-code contract, no `ErrorAction Stop` | same mental model for `command` entries on both OSes |
 | D6 | Globs passed quoted to PowerShell; no charset restriction on windows | PowerShell expands wildcards itself; Windows paths need spaces |
 | D7 | `.msi` defaults use `Start-Process -Wait`, map 3010/1641 → 0, print log tail on failure | msiexec doesn't block; containers can't reboot; MSI errors live in the log |
-| D8 | Ryuk auto-disabled when any windows env is selected | Ryuk is Linux-only; the tool already cleans up its containers |
+| D8 | Windows environments never touch testcontainers-go, so Ryuk is never started for them | Ryuk is a Linux image — it can never run on the Windows engine; the tool already removes its own containers |
 | D9 | Daemon/env OS mismatch = config error per env | explicit, never silent; default `configs/*.yaml` on a Windows host otherwise fails confusingly at image pull |
-| D10 | Workdir on `C:` only (v4) | testcontainers extracts copies relative to the container root |
+| D10 | Windows workdir: any absolute drive path, default `C:\ita` | copy targets the workdir directly (§6.2), no root-relative extraction |
 | D11 | PowerShell scripts passed via `-EncodedCommand` | Windows command-line re-parsing mangles quotes/newlines in `-Command` |
 | D12 | Generic package/version rule for every extension in windows envs; Linux rules untouched | all installer types supported (Q5) without changing Linux upgrade pairing |
 | D13 | Core system only; no configs, presets or file names in code | environments, patterns, checks and upgrade commands are user data (Q2–Q4, Q6) |
+| D14 | Windows environments use the plain Docker client (`moby/moby/client`), not testcontainers-go; Linux keeps testcontainers-go | testcontainers-go doesn't officially support Windows containers and would need a Ryuk switch, copy-path rewriting and a `C:`-only workdir; five Docker calls cover everything (§3.1) |
+| D15 | Daemon preflight uses the plain Docker client | must not initialize testcontainers (and Ryuk) on a Windows host |
 
 ## 16. Non-goals
 
