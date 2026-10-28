@@ -7,11 +7,18 @@ import (
 	"context"
 	"fmt"
 	"sort"
+
+	"github.com/zukigit/installer-testing-auto/internal/shell"
 )
 
 const (
-	// TypeDocker is the container-based environment (testcontainers-go).
+	// TypeDocker is the container-based environment: Linux containers via
+	// testcontainers-go, Windows containers via the plain Docker client.
 	TypeDocker = "docker"
+
+	// OSLinux and OSWindows are the environment.os values.
+	OSLinux   = "linux"
+	OSWindows = "windows"
 )
 
 // Environment is one provisioned target (container, VM, remote host...).
@@ -25,6 +32,8 @@ type Environment interface {
 	Exec(ctx context.Context, cmd []string) (stdout, stderr string, exitCode int, err error)
 	// Stop tears the environment down.
 	Stop(ctx context.Context) error
+	// Shell returns the command dialect spoken inside the environment.
+	Shell() shell.Dialect
 }
 
 // Options describes one unstarted environment.
@@ -37,6 +46,11 @@ type Options struct {
 	Workdir string
 	// ContainerName is the deterministic container name (docker environments).
 	ContainerName string
+	// OS is the environment OS: "" / "linux" or "windows".
+	OS string
+	// Isolation is the Windows container isolation ("process", "hyperv" or
+	// "" for the daemon default). Windows only.
+	Isolation string
 }
 
 // Factory builds an unstarted Environment for a registered type.

@@ -285,11 +285,13 @@ argv assertions in `internal/checks/checks_test.go`
 must pass **unmodified** after the refactor — that is the acceptance test for
 Phase 1.
 
-## 6. Windows Docker environment (`internal/env/docker_windows.go`)
+## 6. Windows Docker environment (`internal/env/windows_docker.go`)
 
 A new implementation of the existing `Environment` interface, built on the
 plain Docker client (§3.1). The file name describes its role (no build
-tag) — it compiles and unit-tests on Linux. The env factory selects it when
+tag) — it compiles and unit-tests on Linux. (Implementation note: it is
+`windows_docker.go`, not `docker_windows.go` — Go treats a `_windows.go`
+suffix as an implicit `GOOS=windows` build constraint.) The env factory selects it when
 `environment.os: windows` (`type: docker` stays the config value);
 `os: linux` keeps today's testcontainers-based `DockerEnvironment`, whose
 only change is `Shell()` returning `shell.POSIX` (§5.3).
@@ -530,7 +532,8 @@ with and without `version_format`.
   logs unchanged).
 - `list`: prints `os:` (and `isolation:` when set) under `type:`.
 - `list`: an `upgrade:` line per installer (parsed version, or the skip
-  reason it would get — §8.2).
+  reason it would get — §8.2). (Implementation note: printed as `pairing:`,
+  because `upgrade:` already shows the upgrade command.)
 - `report`: one new skip reason text, `no_version_format` (§8.2); otherwise
   no rendering changes — paths and commands are opaque strings. Optionally show `(windows)` next to the env header when `os` is
   present.
@@ -557,8 +560,8 @@ with and without `version_format`.
 | `internal/shell/shell_test.go` (new) | exact strings for both dialects, quoting edge cases (`'`, spaces, `[`) |
 | `internal/env/env.go` | `Shell()` on `Environment`; `Options.OS`, `Options.Isolation` |
 | `internal/env/docker.go` | `Shell()` returns `shell.POSIX`; otherwise unchanged (Linux, testcontainers-go) |
-| `internal/env/docker_windows.go` (new) | Docker-client Windows environment (§6) + factory selection by `os` |
-| `internal/env/docker_windows_test.go` (new) | fake-client tests: create args (isolation, keep-alive, name), copy tar entry + destination, exec exit code + CRLF, remove |
+| `internal/env/windows_docker.go` (new) | Docker-client Windows environment (§6) + factory selection by `os` |
+| `internal/env/windows_docker_test.go` (new) | fake-client tests: create args (isolation, keep-alive, name), copy tar entry + destination, exec exit code + CRLF, remove |
 | `go.mod` | `github.com/moby/moby/client` moves from indirect to direct — already vendored, no new download |
 | `internal/task/install.go`, `uninstall.go`, `upgrade.go` | `e.Shell().Command(...)` |
 | `internal/checks/checks.go` | probes via dialect; drop local `quote` |
@@ -626,7 +629,7 @@ change), Pattern variables (works identically on Windows).
 | 0 | Spike §3 on the Windows host | S1–S9 recorded in §14 |
 | 1 | `internal/shell` + `Environment.Shell()`; tasks/checks/docker use the dialect; POSIX only | all existing tests pass **unmodified**; Linux run output identical |
 | 2 | Config: `os`, `isolation`, OS-aware workdir & container paths, windows glob validation | unit tests; `list` on a windows config shows `C:\ita\...` paths |
-| 3 | `docker_windows.go` (§6): create/start with keep-alive + isolation, copy, exec + CRLF, remove | one `fresh-install` case passes on the Windows host (with a throwaway local config, not committed) |
+| 3 | `windows_docker.go` (§6): create/start with keep-alive + isolation, copy, exec + CRLF, remove | one `fresh-install` case passes on the Windows host (with a throwaway local config, not committed) |
 | 4 | `.msi` / `.ps1` defaults, `version_format` key (§8.2) | unit tests pin §8.1 defaults and the §8.2 template rules; all three tasks pass for one MSI incl. one upgrade pair on the Windows host |
 | 5 | Logging/list tweaks, README per §11.1, `GOOS=windows` build check | every §11.1 row done and its examples verified on the Windows host; `configs/` diff is empty; full run + report on the Windows host with the user's configs |
 
@@ -659,6 +662,12 @@ Overall: **implement the core system only, `configs/` stays untouched.**
 ## 14. Spike results
 
 *(to be filled in after Phase 0)*
+
+Implementation status (2026-10-28): Phases 1, 2, 4 and the code of Phases 3
+and 5 are implemented and unit-tested on Linux (`GOOS=windows` build + vet
+pass). Still open: the spike (S1–S9) and every "on the Windows host" done
+criterion — in particular the PowerShell prelude/epilogue (§5.2, S5–S7) and
+the README Windows examples are not yet verified on a real host.
 
 ## 15. Decisions
 

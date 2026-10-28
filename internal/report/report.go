@@ -25,6 +25,10 @@ func ListBundle(b *config.Bundle) {
 	fmt.Printf("env %s\n", b.EnvName())
 	fmt.Printf("  config:   %s\n", b.Path)
 	fmt.Printf("  type:     %s\n", env.Type)
+	fmt.Printf("  os:       %s\n", osOrDefault(env.OS))
+	if env.Isolation != "" {
+		fmt.Printf("  isolation: %s\n", env.Isolation)
+	}
 	fmt.Printf("  image:    %s\n", env.Image)
 	fmt.Printf("  workdir:  %s\n", env.Workdir)
 	if len(b.Installers) == 0 {
@@ -34,9 +38,10 @@ func ListBundle(b *config.Bundle) {
 	for _, ri := range b.Installers {
 		fmt.Printf("  installer %s\n", ri.LocalPath)
 		fmt.Printf("    in-container: %s\n", ri.ContainerPath)
-		fmt.Printf("    install:      %s\n", ri.Expand(ri.InstallCmd))
-		fmt.Printf("    uninstall:    %s\n", ri.Expand(ri.UninstallCmd))
-		fmt.Printf("    upgrade:      %s\n", ri.Expand(ri.UpgradeCmd))
+		fmt.Printf("    install:      %s\n", indentCont(ri.Expand(ri.InstallCmd)))
+		fmt.Printf("    uninstall:    %s\n", indentCont(ri.Expand(ri.UninstallCmd)))
+		fmt.Printf("    upgrade:      %s\n", indentCont(ri.Expand(ri.UpgradeCmd)))
+		fmt.Printf("    pairing:      %s\n", pairingText(ri))
 		if c := ri.InstallChecks; c != nil {
 			fmt.Printf("    install_checks:  must_exist=%d must_not_exist=%d commands=%d\n",
 				len(c.MustExist), len(c.MustNotExist), len(c.Commands))
@@ -49,6 +54,33 @@ func ListBundle(b *config.Bundle) {
 			fmt.Printf("    upgrade_checks:   must_exist=%d must_not_exist=%d commands=%d\n",
 				len(c.MustExist), len(c.MustNotExist), len(c.Commands))
 		}
+	}
+}
+
+func osOrDefault(os string) string {
+	if os == "" {
+		return config.OSLinux
+	}
+	return os
+}
+
+// indentCont aligns the continuation lines of multi-line commands (e.g. the
+// .msi defaults) under the first line.
+func indentCont(s string) string {
+	return strings.ReplaceAll(s, "\n", "\n"+strings.Repeat(" ", len("    install:      ")))
+}
+
+// pairingText is the upgrade-pairing detail of one installer: the parsed
+// version and identity, or the skip reason the upgrade task would give it
+// (no_older_version depends on the pool and is not predicted here).
+func pairingText(ri *config.ResolvedInstaller) string {
+	switch {
+	case ri.NoVersionFormat:
+		return "skipped by upgrade (no_version_format)"
+	case ri.Version == "":
+		return "skipped by upgrade (nonstandard_version)"
+	default:
+		return fmt.Sprintf("version=%s package=%s", ri.Version, ri.UpgradeIdentity())
 	}
 }
 
@@ -145,6 +177,7 @@ type envRec struct {
 	name    string
 	image   string
 	workdir string
+	os      string // "" for linux (env_start omits it)
 	cases   []*caseRec
 	sawEnd  bool
 	passed  int
@@ -235,6 +268,7 @@ func (r *Run) apply(ev *Event) {
 		e := r.env(ev.Env)
 		e.image = ev.str("image")
 		e.workdir = ev.str("workdir")
+		e.os = ev.str("os")
 	case "env_end":
 		e := r.env(ev.Env)
 		e.sawEnd = true

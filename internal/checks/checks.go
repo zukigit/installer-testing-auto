@@ -12,13 +12,14 @@ import (
 	"github.com/zukigit/installer-testing-auto/internal/config"
 	"github.com/zukigit/installer-testing-auto/internal/env"
 	"github.com/zukigit/installer-testing-auto/internal/logging"
+	"github.com/zukigit/installer-testing-auto/internal/shell"
 )
 
 // Run executes every check in cs against the environment and returns the
 // passed/failed totals. cs may be nil (no checks configured for this phase).
 // must_exist / must_not_exist entries containing any of * ? [ are glob
 // patterns expanded by the environment's own shell (v3.2); exact entries keep
-// the literal test -e probe.
+// the literal existence probe (test -e / Test-Path).
 func Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, cs *config.Checks, cl *logging.CaseLogger) (passed, failed int) {
 	if cs == nil {
 		return 0, 0
@@ -119,7 +120,7 @@ func Run(ctx context.Context, e env.Environment, ri *config.ResolvedInstaller, c
 	}
 	for _, c := range cs.Commands {
 		cmd := ri.Expand(c.Command)
-		stdout, stderr, code, err := e.Exec(ctx, []string{"/bin/sh", "-c", cmd})
+		stdout, stderr, code, err := e.Exec(ctx, e.Shell().Command(cmd))
 		expected := 0
 		if c.ExpectedExitCode != nil {
 			expected = *c.ExpectedExitCode
@@ -187,12 +188,14 @@ func withStdout(fields map[string]any, output string) map[string]any {
 	return fields
 }
 
-// probeFile reports whether path exists inside the environment by running
-// `test -e` through the shell.
+// probeFile reports whether path exists inside the environment with the
+// dialect's existence probe (`test -e` on POSIX, `Test-Path` on PowerShell).
 func probeFile(ctx context.Context, e env.Environment, path string) (exists bool, code int, output string, err error) {
-	stdout, _, code, err := e.Exec(ctx, []string{"/bin/sh", "-c", "test -e " + quote(path)})
+	sh := e.Shell()
+	probe := probeName(sh, "test -e", "Test-Path")
+	stdout, _, code, err := e.Exec(ctx, sh.Command(sh.PathExists(path)))
 	if err != nil {
-		return false, -1, stdout, fmt.Errorf("exec test -e: %w", err)
+		return false, -1, stdout, fmt.Errorf("exec %s: %w", probe, err)
 	}
 	switch code {
 	case 0:
@@ -200,24 +203,30 @@ func probeFile(ctx context.Context, e env.Environment, path string) (exists bool
 	case 1:
 		return false, 1, stdout, nil
 	default:
-		return false, code, stdout, fmt.Errorf("unexpected exit code %d from test -e", code)
+		return false, code, stdout, fmt.Errorf("unexpected exit code %d from %s", code, probe)
 	}
 }
 
-func quote(s string) string {
-	return "'" + s + "'"
+// probeName picks the probe name used in error details per dialect.
+func probeName(sh shell.Dialect, posix, powershell string) string {
+	if sh.Name() == shell.PowerShell.Name() {
+		return powershell
+	}
+	return posix
 }
 
-// probeGlob expands a glob check path with the environment's shell: the
-// pattern is passed unquoted so /bin/sh expands it, and `ls -d` lists the
-// matches (files and directories, non-recursively). PASS is determined by the
-// number of matched names on stdout — NOT by the exit code, which conflates
+// probeGlob expands a glob check path with the environment's shell. POSIX:
+// the pattern is passed unquoted so /bin/sh expands it, and `ls -d` lists the
+// matches (files and directories, non-recursively). PowerShell: the pattern
+// is passed quoted and Get-Item expands it. PASS is determined by the number
+// of matched names on stdout — NOT by the exit code, which conflates
 // "no match" (pattern passed through literally, ls exits 2) with real errors
 // such as unreadable directories.
 func probeGlob(ctx context.Context, e env.Environment, pattern string) (matched []string, code int, err error) {
-	stdout, _, code, err := e.Exec(ctx, []string{"/bin/sh", "-c", "ls -d -- " + pattern})
+	sh := e.Shell()
+	stdout, _, code, err := e.Exec(ctx, sh.Command(sh.Glob(pattern)))
 	if err != nil {
-		return nil, -1, fmt.Errorf("exec ls -d: %w", err)
+		return nil, -1, fmt.Errorf("exec %s: %w", probeName(sh, "ls -d", "Get-Item"), err)
 	}
 	if s := strings.TrimSpace(stdout); s != "" {
 		matched = strings.Split(s, "\n")

@@ -39,7 +39,7 @@ func (t Upgrade) Run(ctx context.Context, e env.Environment, in Input, cl *loggi
 		return Result{Failed: 1}
 	}
 	setupCmd := from.Expand(from.InstallCmd)
-	stdout, stderr, code, err := e.Exec(ctx, []string{"/bin/sh", "-c", setupCmd})
+	stdout, stderr, code, err := e.Exec(ctx, e.Shell().Command(setupCmd))
 	cl.Step("setup-install", setupCmd, code, err == nil && code == 0, stdout, stderr)
 	if err != nil || code != 0 {
 		return Result{Failed: 1} // nothing to upgrade from
@@ -59,7 +59,7 @@ func (t Upgrade) Run(ctx context.Context, e env.Environment, in Input, cl *loggi
 		return Result{Passed: passed, Failed: 1}
 	}
 	upCmd := ri.Expand(ri.UpgradeCmd)
-	out2, err2out, code2, err2 := e.Exec(ctx, []string{"/bin/sh", "-c", upCmd})
+	out2, err2out, code2, err2 := e.Exec(ctx, e.Shell().Command(upCmd))
 	cl.Step("upgrade", upCmd, code2, err2 == nil && code2 == 0, out2, err2out)
 	if err2 != nil || code2 != 0 {
 		return Result{Passed: passed, Failed: 1}

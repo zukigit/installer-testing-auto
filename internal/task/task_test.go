@@ -7,6 +7,7 @@ import (
 
 	"github.com/zukigit/installer-testing-auto/internal/config"
 	"github.com/zukigit/installer-testing-auto/internal/logging"
+	"github.com/zukigit/installer-testing-auto/internal/shell"
 )
 
 // stubEnv is a minimal Environment standing in for the docker environment.
@@ -16,6 +17,7 @@ type stubEnv struct {
 
 func (s *stubEnv) Name() string                                     { return "stub" }
 func (s *stubEnv) Start(ctx context.Context) error                  { return nil }
+func (s *stubEnv) Shell() shell.Dialect                             { return shell.POSIX }
 func (s *stubEnv) Stop(ctx context.Context) error                   { return nil }
 func (s *stubEnv) Copy(ctx context.Context, src, dest string) error { return nil }
 func (s *stubEnv) Exec(ctx context.Context, cmd []string) (string, string, int, error) {
@@ -29,6 +31,7 @@ type seqEnv struct {
 
 func (s *seqEnv) Name() string                                     { return "seq" }
 func (s *seqEnv) Start(ctx context.Context) error                  { return nil }
+func (s *seqEnv) Shell() shell.Dialect                             { return shell.POSIX }
 func (s *seqEnv) Stop(ctx context.Context) error                   { return nil }
 func (s *seqEnv) Copy(ctx context.Context, src, dest string) error { return nil }
 func (s *seqEnv) Exec(ctx context.Context, cmd []string) (string, string, int, error) {
@@ -50,6 +53,7 @@ func (s *seqCopyEnv) Name() string { return "seqcopy" }
 func (s *seqCopyEnv) Start(ctx context.Context) error {
 	return nil
 }
+func (s *seqCopyEnv) Shell() shell.Dialect           { return shell.POSIX }
 func (s *seqCopyEnv) Stop(ctx context.Context) error { return nil }
 func (s *seqCopyEnv) Copy(ctx context.Context, src, dest string) error {
 	s.count++

@@ -12,6 +12,7 @@ import (
 
 	"github.com/zukigit/installer-testing-auto/internal/config"
 	"github.com/zukigit/installer-testing-auto/internal/logging"
+	"github.com/zukigit/installer-testing-auto/internal/shell"
 )
 
 // execEnv returns one scripted exec result per call and records the argv of
@@ -19,6 +20,7 @@ import (
 type execEnv struct {
 	results []execResult
 	args    [][]string
+	dialect shell.Dialect // nil = POSIX
 }
 
 type execResult struct {
@@ -29,6 +31,12 @@ type execResult struct {
 }
 
 func (e *execEnv) Name() string { return "exec" }
+func (e *execEnv) Shell() shell.Dialect {
+	if e.dialect == nil {
+		return shell.POSIX
+	}
+	return e.dialect
+}
 func (e *execEnv) Start(ctx context.Context) error {
 	return nil
 }

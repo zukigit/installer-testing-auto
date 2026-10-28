@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -36,11 +37,18 @@ func (b *Bundle) EnvName() string {
 // ResolvedInstaller is one installer file matched by a pattern, with
 // concrete commands (placeholders still expandable via Expand).
 type ResolvedInstaller struct {
-	LocalPath       string  // local path, e.g. bin/myapp_1.2.3_amd64.deb
-	ContainerPath   string  // path inside the environment
-	Basename        string  // file name without directories
-	PackageName     string  // package name derived from the file name
-	Version         string  // MAJOR.MINOR.PATCH[-Suffix], "" if not standard
+	LocalPath     string // local path, e.g. bin/myapp_1.2.3_amd64.deb
+	ContainerPath string // path inside the environment
+	Basename      string // file name without directories
+	PackageName   string // package name derived from the file name ({package} placeholder)
+	Version       string // MAJOR.MINOR.PATCH[-Suffix], "" if not standard
+	// UpgradeKey is the upgrade-pairing identity: two installers pair only
+	// when their keys are equal. From version_format when set, else
+	// PackageName. Never used for command placeholders.
+	UpgradeKey string
+	// NoVersionFormat marks a windows installer without version_format: the
+	// upgrade task skips it (no built-in version rule on windows).
+	NoVersionFormat bool
 	InstallCmd      string  // template (may be empty -> no default for ext)
 	UninstallCmd    string  // template (may be empty)
 	UpgradeCmd      string  // template (may be empty)
@@ -66,9 +74,21 @@ func (c *Config) Resolve(path string) (*Bundle, error) {
 	b := &Bundle{Path: path, Config: c}
 	workdir := c.Environment.Workdir
 	if workdir == "" {
-		workdir = DefaultWorkdir
+		workdir = DefaultWorkdirFor(c.Environment.OS)
 		c.Environment.Workdir = workdir // write the default back so list output shows it
 	}
+	var vfs []*VersionFormat // per installer entry, nil = no version_format
+	for i, spec := range c.Installers {
+		var vf *VersionFormat
+		if spec.VersionFormat != "" {
+			var err error
+			if vf, err = CompileVersionFormat(spec.VersionFormat, c.Environment.IsWindows()); err != nil {
+				return nil, fmt.Errorf("installers[%d]: %w", i, err)
+			}
+		}
+		vfs = append(vfs, vf)
+	}
+	osName := c.Environment.OS
 	poolSeen := map[string]bool{}
 	// Pass 1: the pinned list drives the case matrix (unchanged) and starts
 	// the upgrade pool as the same pointers, deduplicated by path.
@@ -81,7 +101,7 @@ func (c *Config) Resolve(path string) (*Bundle, error) {
 			return nil, fmt.Errorf("installers[%d].pattern %q matched no files", i, spec.Pattern)
 		}
 		for _, local := range matches {
-			ri, err := resolveInstaller(spec, local, workdir)
+			ri, err := resolveInstaller(spec, local, workdir, osName, vfs[i])
 			if err != nil {
 				return nil, fmt.Errorf("installers[%d]: %w", i, err)
 			}
@@ -97,7 +117,7 @@ func (c *Config) Resolve(path string) (*Bundle, error) {
 	// only — never a target. Best-effort: the widened pattern is always a
 	// superset of the pinned one, so a glob error or zero extras can never
 	// invalidate the config.
-	for _, spec := range c.Installers {
+	for i, spec := range c.Installers {
 		if spec.poolPattern == "" || spec.poolPattern == spec.Pattern {
 			continue
 		}
@@ -109,7 +129,7 @@ func (c *Config) Resolve(path string) (*Bundle, error) {
 			if poolSeen[local] {
 				continue
 			}
-			ri, err := resolveInstaller(spec, local, workdir)
+			ri, err := resolveInstaller(spec, local, workdir, osName, vfs[i])
 			if err != nil {
 				continue
 			}
@@ -130,11 +150,20 @@ func LoadBundle(path string, vars map[string]string) (*Bundle, error) {
 	return cfg.Resolve(path)
 }
 
-func resolveInstaller(spec InstallerSpec, local, workdir string) (*ResolvedInstaller, error) {
+// ContainerJoin joins a container directory and a file name with the
+// container OS's separator — never the host's.
+func ContainerJoin(osName, dir, base string) string {
+	if osName == OSWindows {
+		return strings.TrimRight(dir, `\`) + `\` + base
+	}
+	return path.Join(dir, base)
+}
+
+func resolveInstaller(spec InstallerSpec, local, workdir, osName string, vf *VersionFormat) (*ResolvedInstaller, error) {
 	base := filepath.Base(local)
 	ri := &ResolvedInstaller{
 		LocalPath:       local,
-		ContainerPath:   filepath.ToSlash(filepath.Join(workdir, base)),
+		ContainerPath:   ContainerJoin(osName, workdir, base),
 		Basename:        base,
 		PackageName:     derivePackage(base),
 		InstallCmd:      spec.InstallCommand,
@@ -153,10 +182,46 @@ func resolveInstaller(spec InstallerSpec, local, workdir string) (*ResolvedInsta
 	if ri.UpgradeCmd == "" {
 		ri.UpgradeCmd = defaultUpgradeCmd(base)
 	}
-	if v, ok := ExtractVersionFromFilename(base); ok {
-		ri.Version = v.String()
+	// Upgrade pairing (version + identity): version_format when set (any
+	// OS), else the built-in .deb/.rpm rules on linux, none on windows.
+	ri.UpgradeKey = ri.PackageName
+	switch {
+	case vf != nil:
+		if v, id, ok := vf.Match(base); ok {
+			ri.Version = v
+			ri.UpgradeKey = id
+			if osName == OSWindows {
+				ri.UpgradeKey = strings.ToLower(id) // matching is case-insensitive on windows
+			}
+		}
+	case osName == OSWindows:
+		ri.NoVersionFormat = true
+	default:
+		if v, ok := ExtractVersionFromFilename(base); ok {
+			ri.Version = v.String()
+		}
 	}
 	return ri, nil
+}
+
+// UpgradeIdentity is the pairing identity (UpgradeKey, falling back to
+// PackageName for hand-built installers).
+func (ri *ResolvedInstaller) UpgradeIdentity() string {
+	if ri.UpgradeKey != "" {
+		return ri.UpgradeKey
+	}
+	return ri.PackageName
+}
+
+// msiCommand builds the default msiexec command for one action (/i or /x).
+// msiexec is a GUI-subsystem program, so Start-Process -Wait is required;
+// 3010/1641 (reboot required/initiated) count as success because containers
+// cannot reboot; on failure the tail of the verbose log is printed.
+func msiCommand(action, logName string) string {
+	log := "{installer}." + logName + ".log"
+	return "$p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList '" + action + ` "{installer}" /qn /norestart /l*v "` + log + `"'` + "\n" +
+		`if ($p.ExitCode -in 0, 3010, 1641) { if ($p.ExitCode) { "msiexec exit $($p.ExitCode) (reboot required) treated as success" }; exit 0 }` + "\n" +
+		"Get-Content '" + log + "' -Tail 40; exit $p.ExitCode"
 }
 
 // defaultInstallCmd returns the extension-based install command default.
@@ -168,6 +233,10 @@ func defaultInstallCmd(base string) string {
 		return "rpm -ivh {installer}"
 	case ".sh":
 		return "sh {installer}"
+	case ".msi":
+		return msiCommand("/i", "install")
+	case ".ps1":
+		return "& '{installer}'"
 	default:
 		return ""
 	}
@@ -180,19 +249,24 @@ func defaultUpgradeCmd(base string) string {
 		return "rpm -Uvh {installer}" // the upgrade flag, vs -ivh for fresh-install
 	case ".deb":
 		return "dpkg -i {installer}" // dpkg -i upgrades in place
+	case ".msi":
+		return msiCommand("/i", "upgrade") // major upgrades; minor upgrades need an override
 	default:
 		return ""
 	}
 }
 
 // defaultUninstallCmd returns the extension-based uninstall command default.
-// ".sh" has no default and must be set explicitly in the config.
+// ".sh", ".ps1" and non-MSI Windows types have no default and must be set
+// explicitly in the config.
 func defaultUninstallCmd(base string) string {
 	switch strings.ToLower(filepath.Ext(base)) {
 	case ".deb":
 		return "dpkg -r {package}"
 	case ".rpm":
 		return "rpm -e {package}"
+	case ".msi":
+		return msiCommand("/x", "uninstall") // by MSI file: no ProductCode lookup needed
 	default:
 		return ""
 	}

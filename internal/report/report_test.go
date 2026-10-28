@@ -344,3 +344,52 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	return string(out)
 }
+
+func TestWindowsReportAndList(t *testing.T) {
+	const logs = `
+{"ts":"2026-10-28T12:00:00.000Z","level":"info","event":"run_start","data":{"configs":1,"cases":1,"parallel":5}}
+{"ts":"2026-10-28T12:00:00.010Z","level":"info","event":"env_start","env":"windows-2022","data":{"image":"servercore:ltsc2022","workdir":"C:\\ita","os":"windows"}}
+{"ts":"2026-10-28T12:00:00.020Z","level":"info","event":"case_skipped","env":"windows-2022","task":"upgrade","installer":"a.msi","data":{"reason":"no_version_format"}}
+{"ts":"2026-10-28T12:00:00.500Z","level":"info","event":"env_end","env":"windows-2022","data":{"passed":0,"failed":0}}
+{"ts":"2026-10-28T12:00:00.500Z","level":"info","event":"run_end","data":{"passed":0,"failed":0}}
+`
+	run, err := Parse(strings.NewReader(logs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	run.RenderText(&b, false)
+	out := b.String()
+	for _, want := range []string{
+		`env windows-2022 (windows, image servercore:ltsc2022, workdir C:\ita)`,
+		"no version_format configured",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report missing %q\n%s", want, out)
+		}
+	}
+
+	bundle := &config.Bundle{
+		Path:   "configs/win.yaml",
+		Config: &config.Config{Environment: config.EnvironmentSpec{Name: "win", Type: "docker", OS: "windows", Isolation: "process", Image: "x", Workdir: `C:\ita`}},
+		Installers: []*config.ResolvedInstaller{
+			{LocalPath: "bin/a.msi", ContainerPath: `C:\ita\a.msi`, Basename: "a.msi", NoVersionFormat: true, InstallCmd: "line1\nline2"},
+			{LocalPath: "bin/b-1.2.3.msi", ContainerPath: `C:\ita\b-1.2.3.msi`, Basename: "b-1.2.3.msi", Version: "1.2.3", UpgradeKey: "b"},
+			{LocalPath: "bin/c.msi", ContainerPath: `C:\ita\c.msi`, Basename: "c.msi"},
+		},
+	}
+	out = captureStdout(t, func() { ListBundle(bundle) })
+	for _, want := range []string{
+		"  os:       windows\n",
+		"  isolation: process\n",
+		"    in-container: C:\\ita\\a.msi\n",
+		"    install:      line1\n                  line2\n",
+		"    pairing:      skipped by upgrade (no_version_format)\n",
+		"    pairing:      version=1.2.3 package=b\n",
+		"    pairing:      skipped by upgrade (nonstandard_version)\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list missing %q\n%s", want, out)
+		}
+	}
+}

@@ -70,7 +70,7 @@ type caseDef struct {
 type skipDef struct {
 	bundle *config.Bundle
 	ri     *config.ResolvedInstaller
-	reason string // no_older_version | nonstandard_version
+	reason string // no_older_version | nonstandard_version | no_version_format
 }
 
 // Run executes every selected (installer, task) case from every discovered
@@ -216,7 +216,7 @@ func buildUpgradeCases(b *config.Bundle, ri *config.ResolvedInstaller, pool []*c
 	if _, ok := config.ParseVersion(ri.Version); ok {
 		aMtime := fileMtime(ri.LocalPath)
 		for _, o := range pool {
-			if o == ri || o.LocalPath == ri.LocalPath || o.PackageName != ri.PackageName {
+			if o == ri || o.LocalPath == ri.LocalPath || o.UpgradeIdentity() != ri.UpgradeIdentity() {
 				continue
 			}
 			if _, ok := config.ParseVersion(o.Version); !ok {
@@ -232,7 +232,9 @@ func buildUpgradeCases(b *config.Bundle, ri *config.ResolvedInstaller, pool []*c
 	}
 	if len(older) == 0 {
 		// skip event only for installers that are otherwise part of the run
-		if _, ok := config.ParseVersion(ri.Version); !ok {
+		if ri.NoVersionFormat {
+			*skips = append(*skips, skipDef{bundle: b, ri: ri, reason: "no_version_format"})
+		} else if _, ok := config.ParseVersion(ri.Version); !ok {
 			*skips = append(*skips, skipDef{bundle: b, ri: ri, reason: "nonstandard_version"})
 		} else {
 			*skips = append(*skips, skipDef{bundle: b, ri: ri, reason: "no_older_version"})
@@ -274,6 +276,8 @@ func runCase(ctx context.Context, log *logging.Emitter, tr *envTracker, names *n
 		Image:         spec.Image,
 		Workdir:       spec.Workdir,
 		ContainerName: names.assign(containerRawName(envName, c)),
+		OS:            spec.OS,
+		Isolation:     spec.Isolation,
 	}
 	e, err := env.New(spec.Type, envOpts)
 	if err == nil {
@@ -367,9 +371,9 @@ func (t *envTracker) caseStarted(name string) {
 		i.startedEmitted = true
 		workdir := i.spec.Workdir
 		if workdir == "" {
-			workdir = config.DefaultWorkdir
+			workdir = config.DefaultWorkdirFor(i.spec.OS)
 		}
-		t.log.EnvStart(name, i.spec.Image, workdir)
+		t.log.EnvStart(name, i.spec.Image, workdir, i.spec.OS)
 	}
 }
 
