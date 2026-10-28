@@ -573,20 +573,51 @@ with and without `version_format`.
 | `internal/logging/logging.go` | `env_start.os` |
 | `internal/report/report.go` | `list` prints `os` / `isolation` |
 | test fakes (`task_test.go`, `checks_test.go`, `runner_test.go`) | fake env implements `Shell()`; new PowerShell-dialect cases |
-| `README.md` | Windows section (§11.1) |
+| `README.md` | changed + new sections, listed in §11.1 |
 | `configs/**` | **untouched** — Windows env configs and presets are user-written (§13) |
 
-### 11.1 README additions
+### 11.1 README.md updates
 
-Windows host setup (Containers feature, Docker Engine static install,
-`dockerd --register-service`), the `os` / `isolation` / workdir keys,
-PowerShell semantics of `command` and check paths (quoting, registry paths,
-`Start-Process -Wait` pitfall), `.msi` defaults and exit-code mapping, file
-`version_format` (§8.2) with examples for common vendor formats, silent-install command examples for `.exe`
-kinds (§8.1), a complete example Windows config + preset **as README text
-only** (the user copies it into `configs/`), manual cleanup command for leaked `ita-*` containers, image size and
-monthly-update note (pin dated tags like `ltsc2022-amd64-YYYYMMDD` for
-reproducible runs).
+`README.md` is updated in **Phase 5** (after the code works on the Windows
+host, so every example is verified). Section by section, against the
+current README:
+
+**Existing sections — changed**
+
+| README section | Change |
+|---|---|
+| Intro (top) | "using testcontainers-go (Windows via WinRM is a future environment type)" → Linux environments via testcontainers-go, **Windows Server Core containers via the Docker Engine API** (v4); WinRM/VM stays future. |
+| How it works | Fix the numbering (`1, 3, 3, 4, 5` → `1–5`). Step 2: configs describe Linux **or Windows** environments (`os:`). Upgrade bullet: versions come from built-in `.deb`/`.rpm` rules or a `version_format` (Windows: always `version_format`); add the `no_version_format` skip. |
+| Design-docs list ("See docs/…") | Complete it: add v3.3 `pattern-vars-unset-no-match-plan.md`, v3.4 `upgrade-pool-pattern-vars-plan.md`, v3.5 `list-upgrade-checks-plan.md`, **v4 `windows-environment-plan.md`**. |
+| Usage | Add a Windows block: cross-compile `GOOS=windows GOARCH=amd64 go build -mod=vendor -o installer-test-exec.exe ./cmd/installer-test`, and `list` / `run` / `report` with `--config "configs/<windows-glob>.yaml"`, PowerShell redirection (`> run.jsonl`). |
+| Docker-daemon note (under Example reports) | Linux configs need a Linux-containers engine, Windows configs a Windows-containers engine; a mismatch fails that case at start with Docker's own error (no preflight). |
+| Example config | Keep the Linux example; fix its title (`configs/ubuntu-24.04.yaml` → an illustrative name, the real files are `configs/jobarg-*.yaml`). Windows example goes in the new section below. |
+| `environment` table | Add `os` (`linux` default / `windows`), `isolation` (windows only: `process` / `hyperv`), and the OS-dependent `workdir` default (`/tmp` / `C:\ita`). `type` row: drop "(`winrm` is a future type)" wording in favour of "`docker` (Linux and Windows)". |
+| `installers` table | Add `version_format` (optional, **upgrade task only**, link to its section). `uninstall_command` / `upgrade_command` rows: "`.sh` has no default" → "`.sh`, `.ps1` and non-MSI Windows types have no default". |
+| Upgrade pairing | Version sources: built-in `.deb`/`.rpm` rules, or `version_format` (any OS, required on Windows). Three skip reasons: `no_version_format`, `nonstandard_version`, `no_older_version`. |
+| Check blocks table | `must_exist` / `must_not_exist`: on Windows, paths are probed with `Test-Path` / `Get-Item`; registry paths (`HKLM:\...`) allowed. `commands`: run via `sh -c` (Linux) or PowerShell (Windows). |
+| Wildcard file checks | Scope the current text to Linux; add the Windows rules: PowerShell wildcards, passed **quoted**, no charset restriction (spaces fine), hidden items included, case-insensitive. |
+| `commands` entries | `command` row: "via `sh -c`" → "via `sh -c` (Linux) / Windows PowerShell 5.1 (Windows)". |
+| Shared presets | Key list gains `version_format`; drop the hard-coded "13 environment configs" count. Note that Windows presets can live in their own file (`presets:` key). |
+| Command placeholders | Add a Windows example column/row (`{installer}` → `C:\ita\myapp-1.2.3-x64.msi`). State that `{package}` is **not** affected by `version_format`. |
+| Default commands by extension | Add rows `.msi` (install/uninstall/upgrade via `msiexec`, shown in full) and `.ps1` (`& '{installer}'`, no uninstall/upgrade default); "other" row covers `.exe`, `.msix`, `.zip`, … |
+
+**New sections**
+
+| New README section | Content |
+|---|---|
+| **Windows environments** (overview) | What runs where (tool on the Windows host, Windows containers, Server Core image), what isn't supported (reboots, drivers, GUI-only installers, nanoserver). |
+| **Windows host setup** | Enable the Containers feature (Server / Windows 10–11 commands), install Docker Engine without Docker Desktop (Microsoft script or static zip + `dockerd --register-service`), smoke test `docker run --rm --isolation process mcr.microsoft.com/windows/servercore:ltsc2022 cmd /c ver`. Host/image build matching for process isolation. |
+| **Windows example config + preset** | A complete `os: windows` config and a matching preset (file/registry checks, a service check via `commands`, `version_format`) — **as README text only**; the user copies it into `configs/`. |
+| **PowerShell semantics** | Commands and checks run in Windows PowerShell 5.1; exit-code contract (explicit `exit N` > last native exit code > failed statement = 1); the script keeps going after a failing statement (like `sh -c`); single-quote quoting; **`Start-Process -Wait` pitfall** for GUI-subsystem programs (`msiexec`, most `setup.exe`). |
+| **MSI defaults and exit codes** | The default `msiexec` commands, `/qn /norestart`, verbose log next to the installer, log tail printed on failure, **3010 / 1641 = pass with a note** (why: success codes; containers can't reboot; checks still catch real problems), how to override for strict behaviour. |
+| **EXE and other installers** | Silent-install command examples: Inno Setup (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`), NSIS (`/S`), InstallShield (`/s /v"/qn /norestart"`), `.zip` via `Expand-Archive`. |
+| **`version_format`** | Purpose (upgrade pairing only), token table (`{version}`, `{package}`, `*`), 4-part normalization (`7.2.2.1234` → `7.2.2-1234`), identity fallback without `{package}`, examples for common vendor formats, validation errors, checking with `list`. |
+| **Windows images: size and updates** | Download sizes (servercore ≈ 2.2–2.3 GB compressed, ≈ 5 GB on disk; full `server` ≈ 4.4 GB), shared by all parallel containers; monthly Patch-Tuesday re-download; pin dated tags (`ltsc2022-amd64-YYYYMMDD`) for reproducible runs. |
+| **Cleanup** | No reaper on Windows: leaked containers after a hard kill are removed with `docker ps -aq --filter name=ita- \| % { docker rm -f $_ }`. |
+
+**Unchanged**: Example reports + screenshots (the report format does not
+change), Pattern variables (works identically on Windows).
 
 ## 12. Implementation phases
 
@@ -597,7 +628,7 @@ reproducible runs).
 | 2 | Config: `os`, `isolation`, OS-aware workdir & container paths, windows glob validation | unit tests; `list` on a windows config shows `C:\ita\...` paths |
 | 3 | `docker_windows.go` (§6): create/start with keep-alive + isolation, copy, exec + CRLF, remove | one `fresh-install` case passes on the Windows host (with a throwaway local config, not committed) |
 | 4 | `.msi` / `.ps1` defaults, `version_format` key (§8.2) | unit tests pin §8.1 defaults and the §8.2 template rules; all three tasks pass for one MSI incl. one upgrade pair on the Windows host |
-| 5 | Logging/list tweaks, README, `GOOS=windows` build check | docs reviewed; `configs/` diff is empty; full run + report on the Windows host with the user's configs |
+| 5 | Logging/list tweaks, README per §11.1, `GOOS=windows` build check | every §11.1 row done and its examples verified on the Windows host; `configs/` diff is empty; full run + report on the Windows host with the user's configs |
 
 Each phase is independently mergeable; Phase 1 has zero user-visible change.
 
