@@ -408,7 +408,7 @@ commands (README examples, not code):
 
 | Installer kind | `install_command` example |
 |---|---|
-| Inno Setup `.exe` | `$p = Start-Process '{installer}' -Wait -PassThru -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'; exit $p.ExitCode` |
+| Inno Setup `.exe` (superseded: the README now uses the `ProcessStartInfo` pattern, §8.1) | `$p = Start-Process '{installer}' -Wait -PassThru -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'; exit $p.ExitCode` |
 | NSIS `.exe` | `$p = Start-Process '{installer}' -Wait -PassThru -ArgumentList '/S'; exit $p.ExitCode` |
 | InstallShield `.exe` | `$p = Start-Process '{installer}' -Wait -PassThru -ArgumentList '/s','/v"/qn /norestart"'; exit $p.ExitCode` |
 | `.zip` | `Expand-Archive -LiteralPath '{installer}' -DestinationPath 'C:\Program Files\MyApp' -Force` |
@@ -416,17 +416,28 @@ commands (README examples, not code):
 The `.msi` default (install shown; `/x` for uninstall, same shape):
 
 ```powershell
-$p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList '/i "{installer}" /qn /norestart /l*v "{installer}.install.log"'
+$si = New-Object System.Diagnostics.ProcessStartInfo -ArgumentList 'msiexec.exe', '/i "{installer}" /qn /norestart /l*v "{installer}.install.log"'
+$si.UseShellExecute = $false
+$p = [System.Diagnostics.Process]::Start($si); $p.WaitForExit()
 if ($p.ExitCode -in 0, 3010, 1641) { if ($p.ExitCode) { "msiexec exit $($p.ExitCode) (reboot required) treated as success" }; exit 0 }
-Get-Content '{installer}.install.log' -Tail 40; exit $p.ExitCode
+Get-Content '{installer}.install.log' -Tail 40 -ErrorAction SilentlyContinue; exit $p.ExitCode
 ```
+
+**Changed after the first host run (2026-10-29):** the original
+`Start-Process msiexec.exe -Wait ...` hung forever in a Hyper-V Server Core
+container (ltsc2019 on a Windows 10 1909 host) — no msiexec process, no log:
+`Start-Process` launches through the Windows shell (ShellExecute). The
+default now starts msiexec directly (`UseShellExecute = $false`) and waits
+with `WaitForExit()`. In addition every Windows `Exec` is capped at 30
+minutes and abandoned on Ctrl+C (the step fails with an
+`[installer-test] command ... (did not finish)` note in stderr).
 
 Why it looks like this:
 
-- **`Start-Process -Wait`**: `msiexec` is a GUI-subsystem program —
-  PowerShell (and `cmd`) do **not** wait for it when called directly, the
-  step would "pass" before the install finished. This is the #1 pitfall for
-  custom commands too; the README must say so.
+- **Explicit wait**: `msiexec` is a GUI-subsystem program — PowerShell (and
+  `cmd`) do **not** wait for it when called directly, the step would "pass"
+  before the install finished. This is the #1 pitfall for custom commands
+  too; the README says so (and warns against `Start-Process -Wait`).
 - **3010 / 1641** (success, reboot required/initiated): containers cannot
   reboot, so these count as success, with a note in the step stdout.
 - **Log tail on failure**: MSI errors are only readable from the verbose log;
@@ -687,7 +698,7 @@ the README Windows examples are not yet verified on a real host.
 | D4 | PowerShell 5.1 (`powershell.exe`) | present in `servercore`; `pwsh` is not |
 | D5 | `sh -c`-like exit-code contract, no `ErrorAction Stop` | same mental model for `command` entries on both OSes |
 | D6 | Globs passed quoted to PowerShell; no charset restriction on windows | PowerShell expands wildcards itself; Windows paths need spaces |
-| D7 | `.msi` defaults use `Start-Process -Wait`, map 3010/1641 → 0, print log tail on failure | msiexec doesn't block; containers can't reboot; MSI errors live in the log |
+| D7 | `.msi` defaults start msiexec directly (`ProcessStartInfo`, `UseShellExecute = $false`) + `WaitForExit()`, map 3010/1641 → 0, print log tail on failure (was `Start-Process -Wait`, which hung on the host — §8.1) | msiexec doesn't block; containers can't reboot; MSI errors live in the log |
 | D8 | Windows environments never touch testcontainers-go, so Ryuk is never started for them | Ryuk is a Linux image — it can never run on the Windows engine; the tool already removes its own containers |
 | D9 | No daemon/env OS preflight; Docker's own error fails the case at `Start` | Linux containers can run on Windows machines too; the tool doesn't second-guess the daemon, other cases keep running |
 | D10 | Windows workdir: any absolute drive path, default `C:\ita` | copy targets the workdir directly (§6.2), no root-relative extraction |

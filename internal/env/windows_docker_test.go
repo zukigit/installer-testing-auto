@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"bufio"
 	cerrdefs "github.com/containerd/errdefs"
@@ -27,7 +28,8 @@ import (
 type fakeExec struct {
 	stdout, stderr string
 	code           int
-	runningPolls   int // ExecInspect reports Running this many times first
+	runningPolls   int  // ExecInspect reports Running this many times first
+	hang           bool // output stream never ends (until the connection is closed)
 }
 
 type fakeDocker struct {
@@ -88,6 +90,10 @@ func (f *fakeDocker) ExecCreate(ctx context.Context, id string, opts client.Exec
 }
 
 func (f *fakeDocker) ExecAttach(ctx context.Context, execID string, _ client.ExecAttachOptions) (client.ExecAttachResult, error) {
+	if f.cur.hang {
+		c1, _ := net.Pipe() // reads block until c1 is closed
+		return client.ExecAttachResult{HijackedResponse: client.HijackedResponse{Conn: c1, Reader: bufio.NewReader(c1)}}, nil
+	}
 	var buf bytes.Buffer
 	writeFrame(&buf, stdcopy.Stdout, f.cur.stdout)
 	writeFrame(&buf, stdcopy.Stderr, f.cur.stderr)
@@ -285,5 +291,31 @@ func TestSplitWindowsPath(t *testing.T) {
 		if d != want[0] || b != want[1] {
 			t.Errorf("split(%q) = %q, %q", in, d, b)
 		}
+	}
+}
+
+func TestWindowsExecTimeoutAndCancel(t *testing.T) {
+	old := execTimeout
+	defer func() { execTimeout = old }()
+
+	execTimeout = 50 * time.Millisecond
+	f := &fakeDocker{execs: []fakeExec{{hang: true}}}
+	e := newFakeWin(f, Options{Name: "win", Image: "x"})
+	if err := e.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer e.Stop(context.Background())
+	_, stderr, code, err := e.Exec(context.Background(), shell.PowerShell.Command("hang"))
+	if err == nil || code != -1 || !strings.Contains(stderr, "timed out after 50ms") {
+		t.Errorf("timeout: code=%d stderr=%q err=%v", code, stderr, err)
+	}
+
+	execTimeout = time.Hour
+	f.execs = []fakeExec{{hang: true}}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel) // Ctrl+C
+	_, stderr, code, err = e.Exec(ctx, shell.PowerShell.Command("hang"))
+	if err == nil || code != -1 || !strings.Contains(stderr, "interrupted") {
+		t.Errorf("cancel: code=%d stderr=%q err=%v", code, stderr, err)
 	}
 }

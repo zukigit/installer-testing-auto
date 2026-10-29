@@ -14,7 +14,8 @@
       "Bash(go build *)",
       "Bash(gofmt -w internal/env)",
       "Bash(go vet *)",
-      "Bash(go test *)"
+      "Bash(go test *)",
+      "Bash(gofmt -l internal)"
     ],
     "deny": [
       "Edit(/.git/**)",

@@ -480,14 +480,23 @@ The script **keeps going after a failing statement** (no
 are disabled and output is UTF-8 with LF line endings. Quote paths with
 single quotes (`'C:\Program Files\x'`; a `'` inside is doubled: `''`).
 
-**Pitfall — `Start-Process -Wait`**: `msiexec` and most `setup.exe` files are
-GUI-subsystem programs; PowerShell (and `cmd`) do **not** wait for them when
-called directly, so the step would "pass" before the install finished.
-Always run them as:
+**Pitfall — waiting for installers**: `msiexec` and most `setup.exe` files
+are GUI-subsystem programs; PowerShell (and `cmd`) do **not** wait for them
+when called directly, so the step would "pass" before the install finished.
+Do **not** use `Start-Process -Wait` either: it launches through the Windows
+shell and was seen hanging forever (before the installer even started) in
+Hyper-V Server Core containers. Start the program directly and wait for it:
 
 ```powershell
-$p = Start-Process 'C:\ita\setup.exe' -Wait -PassThru -ArgumentList '/S'; exit $p.ExitCode
+$si = New-Object System.Diagnostics.ProcessStartInfo -ArgumentList '{installer}', '/S'
+$si.UseShellExecute = $false
+$p = [System.Diagnostics.Process]::Start($si); $p.WaitForExit(); exit $p.ExitCode
 ```
+
+Every command is limited to **30 minutes**; a command still running then
+fails its step with `[installer-test] command timed out after 30m0s` in
+stderr. Ctrl+C stops a running step the same way, and the containers are
+removed as usual.
 
 ### MSI defaults and exit codes
 
@@ -496,9 +505,11 @@ uses `/x` and `{installer}.uninstall.log`, upgrade `/i` and
 `{installer}.upgrade.log`):
 
 ```powershell
-$p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList '/i "{installer}" /qn /norestart /l*v "{installer}.install.log"'
+$si = New-Object System.Diagnostics.ProcessStartInfo -ArgumentList 'msiexec.exe', '/i "{installer}" /qn /norestart /l*v "{installer}.install.log"'
+$si.UseShellExecute = $false
+$p = [System.Diagnostics.Process]::Start($si); $p.WaitForExit()
 if ($p.ExitCode -in 0, 3010, 1641) { if ($p.ExitCode) { "msiexec exit $($p.ExitCode) (reboot required) treated as success" }; exit 0 }
-Get-Content '{installer}.install.log' -Tail 40; exit $p.ExitCode
+Get-Content '{installer}.install.log' -Tail 40 -ErrorAction SilentlyContinue; exit $p.ExitCode
 ```
 
 - `/qn /norestart`: silent, never reboots.
@@ -517,15 +528,26 @@ Get-Content '{installer}.install.log' -Tail 40; exit $p.ExitCode
 ### EXE and other installers
 
 Any file type can be tested; types without a default need their commands in
-the config or preset. Silent-install examples:
+the config or preset. Use the start-and-wait pattern from
+[PowerShell semantics](#powershell-semantics) with the installer's silent
+arguments:
 
-| Installer kind | `install_command` example |
+```powershell
+$si = New-Object System.Diagnostics.ProcessStartInfo -ArgumentList '{installer}', '<silent arguments>'
+$si.UseShellExecute = $false
+$p = [System.Diagnostics.Process]::Start($si); $p.WaitForExit(); exit $p.ExitCode
+```
+
+| Installer kind | Silent arguments |
 |---|---|
-| Inno Setup `.exe` | `$p = Start-Process '{installer}' -Wait -PassThru -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'; exit $p.ExitCode` |
-| NSIS `.exe` | `$p = Start-Process '{installer}' -Wait -PassThru -ArgumentList '/S'; exit $p.ExitCode` |
-| InstallShield `.exe` | `$p = Start-Process '{installer}' -Wait -PassThru -ArgumentList '/s','/v"/qn /norestart"'; exit $p.ExitCode` |
-| `.zip` | `Expand-Archive -LiteralPath '{installer}' -DestinationPath 'C:\Program Files\MyApp' -Force` |
-| `.ps1` | default `& '{installer}'` (uninstall/upgrade must be set) |
+| Inno Setup `.exe` | `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` |
+| NSIS `.exe` | `/S` |
+| InstallShield `.exe` | `/s /v"/qn /norestart"` |
+
+Other types:
+
+- `.zip`: `Expand-Archive -LiteralPath '{installer}' -DestinationPath 'C:\Program Files\MyApp' -Force`
+- `.ps1`: default `& '{installer}'` (uninstall/upgrade must be set)
 
 ### `version_format`
 

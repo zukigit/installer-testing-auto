@@ -214,14 +214,20 @@ func (ri *ResolvedInstaller) UpgradeIdentity() string {
 }
 
 // msiCommand builds the default msiexec command for one action (/i or /x).
-// msiexec is a GUI-subsystem program, so Start-Process -Wait is required;
+// msiexec is a GUI-subsystem program, so PowerShell would not wait for it
+// when called directly; it is started via ProcessStartInfo with
+// UseShellExecute = $false and waited for with WaitForExit(). Start-Process
+// is avoided: it launches through the Windows shell and was seen hanging
+// before msiexec even started in Hyper-V Server Core containers.
 // 3010/1641 (reboot required/initiated) count as success because containers
 // cannot reboot; on failure the tail of the verbose log is printed.
 func msiCommand(action, logName string) string {
 	log := "{installer}." + logName + ".log"
-	return "$p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList '" + action + ` "{installer}" /qn /norestart /l*v "` + log + `"'` + "\n" +
+	return "$si = New-Object System.Diagnostics.ProcessStartInfo -ArgumentList 'msiexec.exe', '" + action + ` "{installer}" /qn /norestart /l*v "` + log + `"'` + "\n" +
+		"$si.UseShellExecute = $false\n" +
+		"$p = [System.Diagnostics.Process]::Start($si); $p.WaitForExit()\n" +
 		`if ($p.ExitCode -in 0, 3010, 1641) { if ($p.ExitCode) { "msiexec exit $($p.ExitCode) (reboot required) treated as success" }; exit 0 }` + "\n" +
-		"Get-Content '" + log + "' -Tail 40; exit $p.ExitCode"
+		"Get-Content '" + log + "' -Tail 40 -ErrorAction SilentlyContinue; exit $p.ExitCode"
 }
 
 // defaultInstallCmd returns the extension-based install command default.

@@ -132,14 +132,19 @@ installers:
 }
 
 func TestMSIAndPS1Defaults(t *testing.T) {
-	wantInstall := `$p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList '/i "{installer}" /qn /norestart /l*v "{installer}.install.log"'` + "\n" +
+	wantInstall := `$si = New-Object System.Diagnostics.ProcessStartInfo -ArgumentList 'msiexec.exe', '/i "{installer}" /qn /norestart /l*v "{installer}.install.log"'` + "\n" +
+		"$si.UseShellExecute = $false\n" +
+		"$p = [System.Diagnostics.Process]::Start($si); $p.WaitForExit()\n" +
 		`if ($p.ExitCode -in 0, 3010, 1641) { if ($p.ExitCode) { "msiexec exit $($p.ExitCode) (reboot required) treated as success" }; exit 0 }` + "\n" +
-		`Get-Content '{installer}.install.log' -Tail 40; exit $p.ExitCode`
+		`Get-Content '{installer}.install.log' -Tail 40 -ErrorAction SilentlyContinue; exit $p.ExitCode`
+	if strings.Contains(wantInstall, "Start-Process") {
+		t.Fatal("msi default must not use Start-Process")
+	}
 	if got := defaultInstallCmd("App.MSI"); got != wantInstall {
 		t.Errorf("msi install =\n%s\nwant\n%s", got, wantInstall)
 	}
 	uninstall := defaultUninstallCmd("app.msi")
-	if !strings.Contains(uninstall, `'/x "{installer}" /qn /norestart /l*v "{installer}.uninstall.log"'`) ||
+	if !strings.Contains(uninstall, `'msiexec.exe', '/x "{installer}" /qn /norestart /l*v "{installer}.uninstall.log"'`) ||
 		!strings.Contains(uninstall, `Get-Content '{installer}.uninstall.log' -Tail 40`) {
 		t.Errorf("msi uninstall = %s", uninstall)
 	}

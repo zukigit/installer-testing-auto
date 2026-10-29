@@ -10,6 +10,7 @@ package env
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -239,12 +240,21 @@ func splitWindowsPath(p string) (dir, base string) {
 // ended before the daemon marked it finished.
 var execPollInterval = 100 * time.Millisecond
 
+// execTimeout caps one command (install step, check, copy). A command that
+// never returns (e.g. a hung installer) fails its step instead of blocking
+// the run forever.
+var execTimeout = 30 * time.Minute
+
 // Exec runs a command inside the container. stdout and stderr are
-// demultiplexed; CRLF line endings are normalized to LF.
+// demultiplexed; CRLF line endings are normalized to LF. The command is
+// abandoned on Ctrl+C (ctx cancelled) or after execTimeout; the container
+// (and the hung process in it) is removed by Stop as usual.
 func (e *WindowsDockerEnvironment) Exec(ctx context.Context, cmd []string) (stdout, stderr string, exitCode int, err error) {
 	if e.id == "" {
 		return "", "", -1, fmt.Errorf("environment %s not started", e.name)
 	}
+	ctx, cancel := context.WithTimeout(ctx, execTimeout)
+	defer cancel()
 	created, err := e.api.ExecCreate(ctx, e.id, client.ExecCreateOptions{
 		Cmd: cmd, AttachStdout: true, AttachStderr: true,
 	})
@@ -256,8 +266,31 @@ func (e *WindowsDockerEnvironment) Exec(ctx context.Context, cmd []string) (stdo
 		return "", "", -1, fmt.Errorf("exec %v: %w", cmd, err)
 	}
 	var outBuf, errBuf bytes.Buffer
-	_, cerr := stdcopy.StdCopy(&outBuf, &errBuf, att.Reader)
-	att.Close()
+	done := make(chan error, 1)
+	go func() {
+		_, err := stdcopy.StdCopy(&outBuf, &errBuf, att.Reader)
+		done <- err
+	}()
+	var cerr error
+	select {
+	case cerr = <-done:
+		att.Close()
+	case <-ctx.Done():
+		att.Close() // unblocks StdCopy
+		<-done
+		stdout, stderr = normalizeOutput(outBuf.String()), normalizeOutput(errBuf.String())
+		reason := "interrupted"
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			reason = fmt.Sprintf("timed out after %s", execTimeout)
+		}
+		// stderr carries the reason because steps log stdout/stderr, not err
+		stderr = strings.TrimRight(stderr, "\n")
+		if stderr != "" {
+			stderr += "\n"
+		}
+		stderr += "[installer-test] command " + reason + " (did not finish)"
+		return stdout, stderr, -1, fmt.Errorf("exec %v: %s", cmd, reason)
+	}
 	stdout, stderr = normalizeOutput(outBuf.String()), normalizeOutput(errBuf.String())
 	if cerr != nil {
 		return stdout, stderr, -1, fmt.Errorf("demultiplex exec output: %w", cerr)
