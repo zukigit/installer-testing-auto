@@ -1,0 +1,7 @@
+environment:
+  name: windows-2019
+  os: windows
+  image: mcr.microsoft.com/windows/servercore:ltsc2019
+  isolation: hyperv
+installers:
+  - pattern: "bin/*.msi"
