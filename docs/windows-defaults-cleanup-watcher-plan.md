@@ -4,7 +4,8 @@
 > Linux (`GOOS=windows` build + vet pass). Open: the phase 2–4 checks on the
 > Windows host (§4). Notes: the run id is not added to `run_start` (Linux
 > events stay byte-identical) — it is the `ita-run-<id>` folder name and the
-> `ita.run` label; the watcher waits 2 s after the runner exits before
+> `ita.run` label; **the watcher starts only for runs with `os: windows`
+> cases** (§3.2, E10); the watcher waits 2 s after the runner exits before
 > cleaning (in-flight container creates), and on Windows also tries to leave
 > the caller's job object (`CREATE_BREAKAWAY_FROM_JOB`, falling back when the
 > job forbids it).
@@ -138,7 +139,10 @@ Leftovers:
 ### 3.2 Design: two processes
 
 `run` starts a **watcher** process before the first container, then does the
-work as today:
+work as today — **only when the run has `os: windows` cases** (E10). Linux-only
+runs start no watcher, create no run directory and add no `ita.run` label:
+testcontainers' Ryuk already removes Linux containers when the tool exits,
+and Linux cases create no host files.
 
 ```
 installer-test-exec run ...            (process 1: runner)
@@ -256,6 +260,7 @@ It is the watcher's cleanup function with a wider selector and the
 | E6 | Runner keeps its own per-case cleanup; watcher is the safety net | fast cleanup and visible teardown errors stay in the logs |
 | E7 | No watcher → no run | the guarantee "no leftovers" must not silently degrade |
 | E8 | `--keep` containers are removed only on explicit request (`cleanup --include-kept`) | the user asked to keep them; no automatic path may undo that (§6 Q1) |
+| E10 | Watcher only for runs with `os: windows` cases | Linux containers are reaped by testcontainers' Ryuk and Linux cases create no host files; the watcher covers what Windows lacks (no reaper, staging folders) |
 | E9 | Default set is the same on every host — no Windows default on Windows hosts | one predictable rule; Windows runs are always explicit (§6 Q3) |
 
 ## 6. Open questions — answered

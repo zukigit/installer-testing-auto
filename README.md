@@ -72,7 +72,7 @@ go build -mod=vendor -o installer-test-exec github.com/zukigit/installer-testing
 ./installer-test-exec report --details --from run.jsonl   # steps + install_checks/uninstall_checks/upgrade_checks sections for every case
 ./installer-test-exec report --from - < run.jsonl      # from stdin
 
-# remove leftovers of earlier runs (normally not needed, see Cleanup below)
+# remove leftovers of earlier runs (normally not needed, see Cleanup in Windows environments)
 ./installer-test-exec cleanup                  # kept (--keep) containers stay
 ./installer-test-exec cleanup --include-kept   # kept containers too
 ```
@@ -705,8 +705,10 @@ The template is matched against the whole file **base name**
 
 ### Cleanup
 
-Every `run` starts a **watcher process** next to itself before the first
-container. The watcher is detached (Ctrl+C, closing the console window or
+Every `run` **with Windows environments** starts a **watcher process** next
+to itself before the first container. (Linux-only runs don't need one:
+testcontainers' reaper, Ryuk, removes Linux containers when the tool exits,
+and Linux runs create no host files.) The watcher is detached (Ctrl+C, closing the console window or
 killing the tool in Task Manager / `kill -9` don't reach it) and waits for
 the run to end — **however it ends**. Then it removes everything the run
 left behind and exits:

@@ -41,11 +41,26 @@ type Options struct {
 	Parallel int
 	// Keep keeps failed cases' containers alive for debugging.
 	Keep bool
-	// RunID and RunDir identify the run's resources for the cleanup watcher
-	// (container label ita.run=<id>, host files under RunDir). Empty in
-	// tests and direct use.
+	// StartCleanup starts the cleanup watcher and returns the run id and run
+	// directory (container label ita.run=<id>, host files under the run
+	// dir). Called only when the run has os: windows cases — Linux
+	// containers are reaped by testcontainers (Ryuk) and leave no host
+	// files. nil = no watcher (tests, direct use).
+	StartCleanup func() (runID, runDir string, err error)
+
+	// RunID and RunDir are set by Run from StartCleanup.
 	RunID  string
 	RunDir string
+}
+
+// hasWindowsCases reports whether any case runs in an os: windows environment.
+func hasWindowsCases(cases []caseDef) bool {
+	for _, c := range cases {
+		if c.bundle.Config.Environment.IsWindows() {
+			return true
+		}
+	}
+	return false
 }
 
 // List resolves and prints every config without touching any environment.
@@ -115,6 +130,17 @@ func Run(ctx context.Context, opts Options) int {
 		}
 		log.Error(msg)
 		return 1
+	}
+
+	// The watcher starts before any container; no watcher -> no run
+	// (docs/windows-defaults-cleanup-watcher-plan.md §3).
+	if opts.StartCleanup != nil && hasWindowsCases(cases) {
+		id, dir, err := opts.StartCleanup()
+		if err != nil {
+			log.Error(err.Error())
+			return 2
+		}
+		opts.RunID, opts.RunDir = id, dir
 	}
 
 	log.RunStart(len(paths), len(cases), opts.Parallel, opts.Vars)

@@ -3,6 +3,8 @@ package runner
 // Upgrade pairing on windows envs (docs/windows-environment-plan.md §8.2).
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/zukigit/installer-testing-auto/internal/task"
@@ -94,5 +96,29 @@ func TestWindowsNoUpgradeTaskNoSkips(t *testing.T) {
 	_, skips, _ := buildTestQueue("configs/win.yaml", Options{Tasks: []string{task.FreshInstallName}})
 	if len(skips) != 0 {
 		t.Errorf("want no skips without the upgrade task, got %+v", skips)
+	}
+}
+
+func TestWatcherOnlyForWindowsCases(t *testing.T) {
+	writeScenario(t, map[string]string{
+		"bin/app-1.0.0-x64.msi": "",
+		"bin/myapp-0.1.0-1.rpm": "",
+		"configs/win.yaml":      winConfig,
+		"configs/linux.yaml":    "environment:\n  image: x\ninstallers:\n  - pattern: \"bin/*.rpm\"\n",
+	})
+	win, _, _ := buildTestQueue("configs/win.yaml", Options{})
+	lin, _, _ := buildTestQueue("configs/linux.yaml", Options{})
+	if !hasWindowsCases(win) || hasWindowsCases(lin) {
+		t.Errorf("hasWindowsCases: windows=%v linux=%v", hasWindowsCases(win), hasWindowsCases(lin))
+	}
+
+	// a watcher that cannot start aborts the run before any container
+	called := 0
+	code := Run(context.Background(), Options{
+		ConfigPattern: "configs/win.yaml",
+		StartCleanup:  func() (string, string, error) { called++; return "", "", errors.New("no watcher") },
+	})
+	if code != 2 || called != 1 {
+		t.Errorf("windows run: exit=%d watcher calls=%d, want exit 2 and 1 call", code, called)
 	}
 }

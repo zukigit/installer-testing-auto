@@ -14,14 +14,12 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"runtime"
 	"sort"
 	"strings"
 	"syscall"
 
 	"github.com/zukigit/installer-testing-auto/internal/cleanup"
 	"github.com/zukigit/installer-testing-auto/internal/config"
-	"github.com/zukigit/installer-testing-auto/internal/logging"
 	"github.com/zukigit/installer-testing-auto/internal/report"
 	"github.com/zukigit/installer-testing-auto/internal/runner"
 	"github.com/zukigit/installer-testing-auto/internal/task"
@@ -48,8 +46,9 @@ Subcommands:
   list    dry-run: show environments, matched installers and resolved commands
   report  render a text report from captured run logs (NDJSON)
   cleanup remove leftover containers and files of earlier runs (normally
-          not needed: every run starts a watcher process that cleans up
-          when the run ends, however it ends). Containers kept with --keep
+          not needed: every run with Windows environments starts a watcher
+          process that cleans up when the run ends, however it ends; Linux
+          containers are removed by testcontainers). Containers kept with --keep
           stay unless --include-kept is given.
 
 Flags (run):
@@ -143,23 +142,6 @@ func cmdRun(args []string) int {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 2
 	}
-	// The cleanup watcher starts before any container: it removes whatever
-	// this run leaves behind when the process ends, however it ends. No
-	// watcher -> no run (docs/windows-defaults-cleanup-watcher-plan.md §3).
-	runID := cleanup.NewRunID()
-	runDir := cleanup.RunDir(os.TempDir(), runID)
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		logging.New(os.Stdout).Error(fmt.Sprintf("create run directory: %v", err))
-		return 2
-	}
-	watcher, err := cleanup.Spawn(runID, os.TempDir())
-	if err != nil {
-		os.RemoveAll(runDir)
-		logging.New(os.Stdout).Error(err.Error())
-		return 2
-	}
-	defer runtime.KeepAlive(watcher)
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return runner.Run(ctx, runner.Options{
@@ -169,9 +151,23 @@ func cmdRun(args []string) int {
 		Vars:          vars,
 		Parallel:      *parallel,
 		Keep:          *keep,
-		RunID:         runID,
-		RunDir:        runDir,
+		StartCleanup:  startCleanup,
 	})
+}
+
+// startCleanup creates the run directory and starts the detached cleanup
+// watcher for runs with Windows cases.
+func startCleanup() (string, string, error) {
+	runID := cleanup.NewRunID()
+	runDir := cleanup.RunDir(os.TempDir(), runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return "", "", fmt.Errorf("create run directory: %w", err)
+	}
+	if _, err := cleanup.Spawn(runID, os.TempDir()); err != nil {
+		os.RemoveAll(runDir)
+		return "", "", err
+	}
+	return runID, runDir, nil
 }
 
 // cmdWatch is the hidden watcher process: it waits for the runner to exit
