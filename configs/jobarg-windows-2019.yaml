@@ -1,3 +1,5 @@
+presets: configs/shared/presets-windows.yaml
+
 environment:
   name: windows-2019
   os: windows
@@ -5,3 +7,4 @@ environment:
   isolation: hyperv
 installers:
   - pattern: "bin/*.msi"
+    use_preset: agentd-msi

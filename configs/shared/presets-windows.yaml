@@ -1,0 +1,6 @@
+# Shared presets for os: windows configs (paths are relative to the folder
+# the tool runs from, like installer patterns).
+presets:
+  agentd-msi:
+    # upgrade task: install this old MSI first, then upgrade to the target
+    upgrade_from: "bin/Job_Arranger_Agent_x64_old.msi"
