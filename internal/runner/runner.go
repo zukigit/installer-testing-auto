@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zukigit/installer-testing-auto/internal/cleanup"
 	"github.com/zukigit/installer-testing-auto/internal/config"
 	"github.com/zukigit/installer-testing-auto/internal/env"
 	"github.com/zukigit/installer-testing-auto/internal/logging"
@@ -40,6 +41,11 @@ type Options struct {
 	Parallel int
 	// Keep keeps failed cases' containers alive for debugging.
 	Keep bool
+	// RunID and RunDir identify the run's resources for the cleanup watcher
+	// (container label ita.run=<id>, host files under RunDir). Empty in
+	// tests and direct use.
+	RunID  string
+	RunDir string
 }
 
 // List resolves and prints every config without touching any environment.
@@ -47,6 +53,13 @@ func List(configPattern string, vars map[string]string) error {
 	paths, err := config.Discover(configPattern)
 	if err != nil {
 		return err
+	}
+	if configPattern == "" {
+		var windows []string
+		paths, windows = config.FilterDefault(paths)
+		for _, w := range windows {
+			report.ListSkippedWindows(w)
+		}
 	}
 	for _, path := range paths {
 		b, err := config.LoadBundle(path, vars)
@@ -87,10 +100,20 @@ func Run(ctx context.Context, opts Options) int {
 		log.Error(err.Error())
 		return 2
 	}
+	// Default set (no --config): os: windows configs run only when named
+	// explicitly (docs/windows-defaults-cleanup-watcher-plan.md §1).
+	var windowsLeftOut []string
+	if opts.ConfigPattern == "" {
+		paths, windowsLeftOut = config.FilterDefault(paths)
+	}
 
 	cases, envs, skips, configErrors := buildQueue(paths, opts, log)
 	if len(cases) == 0 {
-		log.Error("no cases to run (check --task/--installer filters and the package list in bin/)")
+		msg := "no cases to run (check --task/--installer filters and the package list in bin/)"
+		if len(windowsLeftOut) > 0 {
+			msg += " (os: windows configs run only with an explicit --config)"
+		}
+		log.Error(msg)
 		return 1
 	}
 
@@ -278,6 +301,8 @@ func runCase(ctx context.Context, log *logging.Emitter, tr *envTracker, names *n
 		ContainerName: names.assign(containerRawName(envName, c)),
 		OS:            spec.OS,
 		Isolation:     spec.Isolation,
+		RunID:         opts.RunID,
+		RunDir:        opts.RunDir,
 	}
 	e, err := env.New(spec.Type, envOpts)
 	if err == nil {
@@ -297,6 +322,16 @@ func runCase(ctx context.Context, log *logging.Emitter, tr *envTracker, names *n
 		passed, failed = res.Passed, res.Failed
 		if opts.Keep && failed > 0 {
 			kept = true // container stays up for debugging
+			if opts.RunDir != "" {
+				// before case_end: the watcher must never remove a kept container
+				entry := cleanup.KeptEntry{ID: containerID, Name: envOpts.ContainerName}
+				if hp, ok := e.(interface{ HostPaths() []string }); ok {
+					entry.Paths = hp.HostPaths()
+				}
+				if kerr := cleanup.RecordKept(opts.RunDir, entry); kerr != nil {
+					cl.Error(fmt.Sprintf("record kept container: %v", kerr))
+				}
+			}
 		} else if serr := e.Stop(context.WithoutCancel(ctx)); serr != nil {
 			cl.Error(fmt.Sprintf("teardown: %v", serr))
 		}

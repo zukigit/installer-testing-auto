@@ -319,3 +319,31 @@ func TestWindowsExecTimeoutAndCancel(t *testing.T) {
 		t.Errorf("cancel: code=%d stderr=%q err=%v", code, stderr, err)
 	}
 }
+
+func TestWindowsRunLabelAndStageInRunDir(t *testing.T) {
+	runDir := t.TempDir()
+	f := &fakeDocker{}
+	e := newFakeWin(f, Options{Name: "win", Image: "x", RunID: "R1", RunDir: runDir})
+	if err := e.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer e.Stop(context.Background())
+	if l := f.created[0].Config.Labels; l["ita.run"] != "R1" || l["ita"] != "true" {
+		t.Errorf("labels = %v", l)
+	}
+	if filepath.Dir(e.stageDir) != runDir || !strings.HasPrefix(filepath.Base(e.stageDir), "stage-") {
+		t.Errorf("stageDir %q not inside the run dir %q", e.stageDir, runDir)
+	}
+	if hp := e.HostPaths(); len(hp) != 1 || hp[0] != e.stageDir {
+		t.Errorf("HostPaths = %v", hp)
+	}
+}
+
+func TestLabels(t *testing.T) {
+	if l := Labels("e", ""); l["ita"] != "true" || l["ita.env"] != "e" || l["ita.run"] != "" {
+		t.Errorf("no run id: %v", l)
+	}
+	if l := Labels("e", "R"); l["ita.run"] != "R" {
+		t.Errorf("run id: %v", l)
+	}
+}

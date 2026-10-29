@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -303,4 +305,36 @@ func Discover(pattern string) ([]string, error) {
 // directory (configs/shared/), which Discover treats as never-environments.
 func isSharedPresetsFile(path string) bool {
 	return strings.HasPrefix(filepath.ToSlash(filepath.Clean(path)), "configs/shared/")
+}
+
+// PeekOS reads only environment.os from a config file (non-strict, no
+// validation) — enough to decide default-set membership before the full load.
+func PeekOS(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var peek struct {
+		Environment struct {
+			OS string `yaml:"os"`
+		} `yaml:"environment"`
+	}
+	if err := yaml.Unmarshal(data, &peek); err != nil {
+		return "", err
+	}
+	return peek.Environment.OS, nil
+}
+
+// FilterDefault splits discovered config paths for the default set (no
+// --config given): os: windows configs are left out. A file whose os cannot
+// be read stays in the set, so the full load reports its error as before.
+func FilterDefault(paths []string) (kept, windows []string) {
+	for _, p := range paths {
+		if osName, err := PeekOS(p); err == nil && osName == OSWindows {
+			windows = append(windows, p)
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept, windows
 }

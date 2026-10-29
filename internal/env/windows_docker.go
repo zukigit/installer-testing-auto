@@ -85,6 +85,7 @@ type WindowsDockerEnvironment struct {
 	api                                 dockerAPI
 	id                                  string
 	stageDir                            string // host staging directory, mounted at stageMount
+	runID, runDir                       string
 }
 
 func newWindowsDocker(opts Options, clients clientProvider) *WindowsDockerEnvironment {
@@ -94,7 +95,7 @@ func newWindowsDocker(opts Options, clients clientProvider) *WindowsDockerEnviro
 	return &WindowsDockerEnvironment{
 		name: opts.Name, image: opts.Image, workdir: opts.Workdir,
 		containerName: opts.ContainerName, isolation: opts.Isolation,
-		clients: clients,
+		clients: clients, runID: opts.RunID, runDir: opts.RunDir,
 	}
 }
 
@@ -104,6 +105,15 @@ func (e *WindowsDockerEnvironment) Shell() shell.Dialect { return shell.PowerShe
 
 // ContainerID returns the docker container id, or "" before Start.
 func (e *WindowsDockerEnvironment) ContainerID() string { return e.id }
+
+// HostPaths returns the host files belonging to this container (its staging
+// folder), recorded for --keep so cleanup leaves them with the container.
+func (e *WindowsDockerEnvironment) HostPaths() []string {
+	if e.stageDir == "" {
+		return nil
+	}
+	return []string{e.stageDir}
+}
 
 // Start pulls the image when it is missing, then creates and starts the
 // container with a PowerShell keep-alive command.
@@ -116,7 +126,13 @@ func (e *WindowsDockerEnvironment) Start(ctx context.Context) error {
 	if err := e.ensureImage(ctx); err != nil {
 		return err
 	}
-	stageDir, err := os.MkdirTemp("", "ita-stage-")
+	// staging folder: inside the run directory, so the cleanup watcher
+	// removes it with the run; without a run dir directly under TEMP
+	parent, prefix := e.runDir, "stage-"
+	if parent == "" {
+		parent, prefix = os.TempDir(), "ita-stage-"
+	}
+	stageDir, err := os.MkdirTemp(parent, prefix)
 	if err != nil {
 		return fmt.Errorf("create staging directory: %w", err)
 	}
@@ -124,7 +140,7 @@ func (e *WindowsDockerEnvironment) Start(ctx context.Context) error {
 		os.RemoveAll(stageDir)
 		return fmt.Errorf("create staging directory: %w", err)
 	}
-	labels := map[string]string{"ita": "true", "ita.env": e.name}
+	labels := Labels(e.name, e.runID)
 	created, err := api.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: e.containerName,
 		Config: &container.Config{

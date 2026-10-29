@@ -15,7 +15,9 @@
       "Bash(gofmt -w internal/env)",
       "Bash(go vet *)",
       "Bash(go test *)",
-      "Bash(gofmt -l internal)"
+      "Bash(gofmt -l internal)",
+      "Bash(awk '/^### Windows host setup/,/^### Windows example config/' README.md)",
+      "Bash(awk '/^### Cleanup/,0' README.md)"
     ],
     "deny": [
       "Edit(/.git/**)",

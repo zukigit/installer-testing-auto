@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/zukigit/installer-testing-auto/internal/cleanup"
 	"github.com/zukigit/installer-testing-auto/internal/shell"
 )
 
@@ -51,6 +52,21 @@ type Options struct {
 	// Isolation is the Windows container isolation ("process", "hyperv" or
 	// "" for the daemon default). Windows only.
 	Isolation string
+	// RunID labels the container (ita.run=<id>) so the cleanup watcher can
+	// find it; "" = no run label (tests, direct use).
+	RunID string
+	// RunDir is the run's host directory for files the environment creates
+	// (Windows staging folders); "" = the system temp directory.
+	RunDir string
+}
+
+// Labels returns the container labels for one run.
+func Labels(envName, runID string) map[string]string {
+	l := map[string]string{cleanup.LabelManaged: "true", "ita.env": envName}
+	if runID != "" {
+		l[cleanup.LabelRun] = runID
+	}
+	return l
 }
 
 // Factory builds an unstarted Environment for a registered type.

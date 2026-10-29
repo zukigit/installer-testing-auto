@@ -256,3 +256,23 @@ func TestContainerJoin(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterDefaultDropsWindows(t *testing.T) {
+	writeTestFiles(t, map[string]string{
+		"configs/linux.yaml":    "environment:\n  image: ubuntu\ninstallers: []\n",
+		"configs/win.yaml":      "environment:\n  os: windows\n  image: x\n",
+		"configs/broken.yaml":   "environment: [unclosed\n",
+		"configs/explicit.yaml": "environment:\n  os: linux\n  image: x\n",
+	})
+	paths, err := Discover("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, windows := FilterDefault(paths)
+	if strings.Join(windows, ",") != "configs/win.yaml" {
+		t.Errorf("windows = %v", windows)
+	}
+	if strings.Join(kept, ",") != "configs/broken.yaml,configs/explicit.yaml,configs/linux.yaml" {
+		t.Errorf("kept = %v (an unparsable file stays so its load error is reported)", kept)
+	}
+}

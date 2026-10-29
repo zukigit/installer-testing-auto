@@ -19,6 +19,12 @@ func ListError(path string, err error) {
 	fmt.Printf("ERROR   config %s: %v\n", path, err)
 }
 
+// ListSkippedWindows reports an os: windows config left out of the default
+// config set (no --config given).
+func ListSkippedWindows(path string) {
+	fmt.Printf("SKIPPED config %s: os windows is not in the default set (use --config)\n", path)
+}
+
 // ListBundle prints the resolved bundle for the `list` subcommand.
 func ListBundle(b *config.Bundle) {
 	env := b.Config.Environment

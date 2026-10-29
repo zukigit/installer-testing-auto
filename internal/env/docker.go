@@ -17,6 +17,7 @@ import (
 // implementations (e.g. winrm) follow the same interface.
 type DockerEnvironment struct {
 	name, image, workdir, containerName string
+	runID                               string
 	ctr                                 testcontainers.Container
 }
 
@@ -34,6 +35,7 @@ func init() {
 		return &DockerEnvironment{
 			name: opts.Name, image: opts.Image,
 			workdir: opts.Workdir, containerName: opts.ContainerName,
+			runID: opts.RunID,
 		}, nil
 	})
 }
@@ -65,8 +67,9 @@ func (e *DockerEnvironment) ContainerID() string {
 // base images).
 func (e *DockerEnvironment) Start(ctx context.Context) error {
 	req := testcontainers.ContainerRequest{
-		Image: e.image,
-		Cmd:   []string{"sleep", "infinity"},
+		Image:  e.image,
+		Cmd:    []string{"sleep", "infinity"},
+		Labels: Labels(e.name, e.runID),
 	}
 	if e.containerName != "" {
 		req.Name = e.containerName

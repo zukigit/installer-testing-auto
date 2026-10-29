@@ -1,7 +1,13 @@
 # Windows Defaults, Host Setup Docs and Cleanup Watcher Plan (v4.1)
 
-> Status: **REVIEWED — open questions answered (§6).** Plan only; nothing is
-> implemented.
+> Status: **IMPLEMENTED (2026-10-29)** — all three parts, unit-tested on
+> Linux (`GOOS=windows` build + vet pass). Open: the phase 2–4 checks on the
+> Windows host (§4). Notes: the run id is not added to `run_start` (Linux
+> events stay byte-identical) — it is the `ita-run-<id>` folder name and the
+> `ita.run` label; the watcher waits 2 s after the runner exits before
+> cleaning (in-flight container creates), and on Windows also tries to leave
+> the caller's job object (`CREATE_BREAKAWAY_FROM_JOB`, falling back when the
+> job forbids it).
 > Baseline: v4 (`docs/windows-environment-plan.md`), as fixed after the first
 > Windows host run (staging-folder copy, direct msiexec start, 30-minute exec
 > limit, Ctrl+C-aware exec).

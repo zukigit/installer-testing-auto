@@ -51,7 +51,8 @@ go build -mod=vendor -o installer-test-exec github.com/zukigit/installer-testing
 # dry-run: show envs, matched installers, resolved commands
 ./installer-test-exec list
 
-# run all tasks on all environments (live JSON logs), max 5 containers at once
+# run all tasks on all Linux environments (live JSON logs), max 5 containers at once
+# (os: windows configs are not in the default set: name them with --config)
 ./installer-test-exec run | tee run.jsonl
 
 # install cases only, 8 containers max
@@ -71,7 +72,16 @@ go build -mod=vendor -o installer-test-exec github.com/zukigit/installer-testing
 ./installer-test-exec report --details --from run.jsonl   # steps + install_checks/uninstall_checks/upgrade_checks sections for every case
 ./installer-test-exec report --from - < run.jsonl      # from stdin
 
+# remove leftovers of earlier runs (normally not needed, see Cleanup below)
+./installer-test-exec cleanup                  # kept (--keep) containers stay
+./installer-test-exec cleanup --include-kept   # kept containers too
 ```
+
+**Default config set**: without `--config`, `run` and `list` use every
+`configs/*.yaml` **except `os: windows` configs** — on every host. Windows
+configs run only when named with `--config` (any explicit `--config`,
+even `configs/*.yaml`, is used as given). `list` prints a `SKIPPED config
+...` line for each Windows config it leaves out.
 
 On Windows (see [Windows environments](#windows-environments)), cross-compile
 in the devcontainer and run the `.exe` on the Windows host (PowerShell):
@@ -382,39 +392,133 @@ Not supported: installers that need a reboot, drivers, GUI-only installers,
 
 ### Windows host setup
 
-1. Enable the Containers feature (reboot afterwards):
+Run every command in an **administrator PowerShell**. Paste only the
+command itself — never the `PS C:\...>` prompt in front of it (PowerShell
+reads `PS` as `Get-Process`).
 
-   ```powershell
-   # Windows Server
-   Install-WindowsFeature -Name Containers
-   # Windows 10 / 11 (hyperv isolation also needs Hyper-V)
-   Enable-WindowsOptionalFeature -Online -FeatureName Containers -All
-   Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
-   ```
+**1. Check the host**
 
-2. Install Docker Engine **without Docker Desktop** — either Microsoft's
-   script:
+```powershell
+cmd /c ver                                        # build, e.g. 10.0.18363 / 10.0.20348
+(Get-CimInstance Win32_OperatingSystem).Caption   # edition
+```
 
-   ```powershell
-   Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/microsoft/Windows-Containers/Main/helpful_tools/Install-DockerCE/install-docker-ce.ps1" -o install-docker-ce.ps1
-   .\install-docker-ce.ps1
-   ```
+Windows 10/11 **Home** has no Hyper-V and cannot run Windows containers —
+use Pro / Enterprise or Windows Server.
 
-   or the static binaries from `https://download.docker.com/win/static/stable/x86_64/`:
-   extract the zip to `C:\Program Files\docker`, add it to `PATH`, then
-   `dockerd --register-service; Start-Service docker`.
+**2. Pick the image and isolation from the host build**
 
-3. Smoke test:
+The image build must be **equal to or older than** the host build. Equal
+build → `process` isolation works (fast); older image → `hyperv` only.
 
-   ```powershell
-   docker run --rm --isolation process mcr.microsoft.com/windows/servercore:ltsc2022 cmd /c ver
-   ```
+| Host | `image` | `isolation` |
+|---|---|---|
+| Windows Server 2022 (20348) | `mcr.microsoft.com/windows/servercore:ltsc2022` | `process` |
+| Windows Server 2019 (17763) | `mcr.microsoft.com/windows/servercore:ltsc2019` | `process` |
+| Windows 11 / Server 2025 | `servercore:ltsc2022` | `hyperv` |
+| Windows 10 (e.g. 1909 = 18363) | `servercore:ltsc2019` | `hyperv` |
 
-**Process isolation** (`isolation: process`) is fast and recommended on
-Windows Server, but needs the **host build to match the image** (e.g. a
-Server 2022 host for `ltsc2022`). On a mismatch use `isolation: hyperv` or an
-image matching the host. Unset `isolation` = daemon default (`process` on
-Windows Server, `hyperv` on Windows 10/11).
+**3. Enable the features** (reboot afterwards)
+
+```powershell
+# Windows Server
+Install-WindowsFeature -Name Containers
+# Windows 10 / 11
+Enable-WindowsOptionalFeature -Online -FeatureName Containers -All
+# needed for isolation: hyperv
+Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
+Restart-Computer
+```
+
+For `hyperv` also check that the hypervisor starts at boot and that
+virtualization is available:
+
+```powershell
+bcdedit /enum | Select-String hypervisorlaunchtype   # must not be Off (fix: bcdedit /set hypervisorlaunchtype auto)
+systeminfo | Select-String "Hyper-V|Virtualization"
+```
+
+If the host is itself a VM, enable **nested virtualization** on the outer
+host (Hyper-V: `Set-VMProcessor -VMName <vm> -ExposeVirtualizationExtensions $true`
+with the VM off; VMware: "Virtualize Intel VT-x/EPT or AMD-V/RVI"). On a
+physical machine, VT-x / AMD-V (SVM) must be on in the BIOS/UEFI.
+
+**4. Install Docker Engine** (not Docker Desktop)
+
+Download the newest `docker-<version>.zip` (highest version, no `rc`) from
+`https://download.docker.com/win/static/stable/x86_64/` and extract it:
+
+```powershell
+Expand-Archive .\docker-<version>.zip -DestinationPath "C:\Program Files"   # -> C:\Program Files\docker
+```
+
+**5. Add Docker to PATH — safely**
+
+Read the old value **first**, then write. (Running the write before the
+read replaces the whole system PATH with just the docker folder.)
+
+```powershell
+$old = [Environment]::GetEnvironmentVariable("Path", "Machine")
+[Environment]::SetEnvironmentVariable("Path", "$old;C:\Program Files\docker", "Machine")
+$env:Path += ";C:\Program Files\docker"   # current window
+where.exe docker                           # -> C:\Program Files\docker\docker.exe
+```
+
+If the system PATH was overwritten by mistake: in the **same** window,
+`[Environment]::SetEnvironmentVariable("Path", $env:Path, "Machine")` puts
+the original back (that window still has it).
+
+**6. Register and start the engine**
+
+```powershell
+dockerd --register-service
+Start-Service docker
+docker version     # the Server section must show OS/Arch: windows/amd64
+```
+
+**7. Smoke test** (image and isolation from step 2)
+
+```powershell
+docker run --rm --isolation hyperv mcr.microsoft.com/windows/servercore:ltsc2019 cmd /c ver
+```
+
+**8. Install the tool**
+
+Cross-compile in the devcontainer
+(`GOOS=windows GOARCH=amd64 go build -mod=vendor -o installer-test-exec.exe ./cmd/installer-test`)
+and copy into **one folder** on the host:
+
+```
+C:\ita-test\
+  installer-test-exec.exe
+  configs\        <- your os: windows configs (+ presets)
+  bin\            <- the installer files
+```
+
+Run the tool **from that folder** (`cd C:\ita-test`), not from
+`C:\Windows\system32` — patterns like `bin/*.msi` are relative.
+
+**9. First run**
+
+```powershell
+.\installer-test-exec.exe list --config "configs/jobarg-windows-*.yaml"
+.\installer-test-exec.exe run  --config "configs/jobarg-windows-*.yaml" --task fresh-install --parallel 1 > run.jsonl
+.\installer-test-exec.exe report --details --from run.jsonl
+```
+
+Windows configs always need `--config` (they are not in the default set).
+Hyper-V containers take tens of seconds to start — keep `--parallel` low.
+
+**10. Troubleshooting**
+
+| Error | Meaning / fix |
+|---|---|
+| `failed to connect to the docker API at npipe:////./pipe/docker_engine` | the engine is not running → step 6 |
+| `no matching manifest for windows(10.0.18363)/amd64` | the image is newer than the host → older image (step 2) |
+| `The container operating system does not match the host operating system` | `process` isolation with a different build → `isolation: hyperv` or a matching image |
+| `hcs::CreateComputeSystem ...: The request is not supported` | Hyper-V not available → step 3 (edition, feature, hypervisor launch, BIOS VT-x, nested virtualization) |
+| `A positional parameter cannot be found that accepts argument 'exec'` | the `PS C:\...>` prompt was pasted together with the command |
+| a step's stderr ends with `[installer-test] command timed out after 30m0s` | the installer hung; the MSI log tail is in `report --details` |
 
 ### Windows example config + preset
 
@@ -601,16 +705,34 @@ The template is matched against the whole file **base name**
 
 ### Cleanup
 
-There is no reaper on Windows: the tool removes its own containers, but a
-hard kill of the tool can leave some behind. They are named `ita-*` (and
-labelled `ita=true`):
+Every `run` starts a **watcher process** next to itself before the first
+container. The watcher is detached (Ctrl+C, closing the console window or
+killing the tool in Task Manager / `kill -9` don't reach it) and waits for
+the run to end — **however it ends**. Then it removes everything the run
+left behind and exits:
+
+- containers labelled `ita.run=<run id>` (only this run's — parallel runs
+  and other containers are never touched);
+- the run's host folder `<TEMP>/ita-run-<run id>` (on Windows
+  `%TEMP%\ita-run-<id>`), which holds the staging folders that bring
+  installers into Windows containers (mounted read-only at `C:\ita-stage`,
+  because Docker cannot copy files into a running Hyper-V container).
+
+**`--keep` containers are never removed automatically**: the run records
+them in `<run folder>/kept`; the watcher and a plain `cleanup` leave them
+(and their staging folders) alone.
+
+If the watcher cannot finish (e.g. the Docker daemon was down) it leaves
+`<run folder>/watcher.log` with the reason. Remove leftovers later — and
+kept containers when you no longer need them — with the `cleanup` command:
 
 ```powershell
-docker ps -aq --filter name=ita- | % { docker rm -f $_ }
+.\installer-test-exec.exe cleanup                          # all runs; kept containers stay
+.\installer-test-exec.exe cleanup --run <id>               # one run (id = ita-run-<id> folder name)
+.\installer-test-exec.exe cleanup --include-kept           # also remove kept containers
 ```
 
-Installers reach the container through a host staging folder
-(`%TEMP%\ita-stage-*`, mounted read-only at `C:\ita-stage`), because Docker
-cannot copy files into a running Hyper-V container. The folders are removed
-with their containers; after a hard kill, delete leftovers with
-`Remove-Item "$env:TEMP\ita-stage-*" -Recurse -Force`.
+`cleanup` prints each removed / kept container and folder. Without `--run`
+it also removes leftovers of older tool versions (`ita-*` containers,
+`%TEMP%\ita-stage-*` folders). Only a power loss or reboot during a run
+needs a manual `cleanup` afterwards.
