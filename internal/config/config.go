@@ -74,7 +74,11 @@ type InstallerSpec struct {
 	UpgradeCommand   string `yaml:"upgrade_command"`
 	// VersionFormat is the file-name template the upgrade task uses to pair
 	// old and new installers (e.g. "{package}-{version}-x64.msi").
-	VersionFormat   string  `yaml:"version_format"`
+	VersionFormat string `yaml:"version_format"`
+	// UpgradeFrom is the path/glob of the exact old installer(s) the upgrade
+	// task starts from (docs/upgrade-from-plan.md); replaces the automatic
+	// version pairing for this entry.
+	UpgradeFrom     string  `yaml:"upgrade_from"`
 	InstallChecks   *Checks `yaml:"install_checks"`
 	UninstallChecks *Checks `yaml:"uninstall_checks"`
 	UpgradeChecks   *Checks `yaml:"upgrade_checks"`
@@ -115,6 +119,14 @@ func Load(path string, vars map[string]string) (*Config, error) {
 	}
 	if err := cfg.applyPresets(); err != nil {
 		return nil, fmt.Errorf("invalid config %s: %w", path, err)
+	}
+	// upgrade_from may come from a preset, so it is substituted after the merge.
+	for i := range cfg.Installers {
+		uf := Substitute(cfg.Installers[i].UpgradeFrom, vars)
+		if _, err := filepath.Match(uf, ""); err != nil {
+			return nil, fmt.Errorf("invalid config %s: installers[%d].upgrade_from %q: %w", path, i, uf, err)
+		}
+		cfg.Installers[i].UpgradeFrom = uf
 	}
 	if err := cfg.validateGlobPaths(); err != nil {
 		return nil, fmt.Errorf("invalid config %s: %w", path, err)

@@ -276,3 +276,71 @@ func TestFilterDefaultDropsWindows(t *testing.T) {
 		t.Errorf("kept = %v (an unparsable file stays so its load error is reported)", kept)
 	}
 }
+
+func TestUpgradeFromConfig(t *testing.T) {
+	b, err := loadWin(t, map[string]string{
+		"bin/app-0.1.2.rpm":     "",
+		"bin/old/app-0.1.1.rpm": "",
+		"configs/shared/presets.yaml": `
+presets:
+  p:
+    upgrade_from: "bin/old/app-{OLD}.rpm"
+    install_command: "rpm -i {installer}"
+`,
+		"configs/test.yaml": `
+environment:
+  image: x
+installers:
+  - pattern: "bin/app-*.rpm"
+    use_preset: p
+`,
+	})
+	_ = b
+	if err != nil {
+		t.Fatal(err)
+	}
+	// preset value, {OLD} unset -> no match: not an error
+	ri := b.Installers[0]
+	if !ri.UpgradeFromSet || len(ri.UpgradeFrom) != 0 {
+		t.Errorf("unset var: set=%v from=%v", ri.UpgradeFromSet, ri.UpgradeFrom)
+	}
+
+	// with the variable: resolved with the entry's (preset's) commands
+	b, err = LoadBundle("configs/test.yaml", map[string]string{"OLD": "0.1.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := b.Installers[0].UpgradeFrom
+	if len(f) != 1 || f[0].LocalPath != "bin/old/app-0.1.1.rpm" || f[0].ContainerPath != "/tmp/app-0.1.1.rpm" ||
+		f[0].Expand(f[0].InstallCmd) != "rpm -i /tmp/app-0.1.1.rpm" {
+		t.Errorf("from = %+v", f)
+	}
+}
+
+func TestUpgradeFromEntryWinsAndBadGlob(t *testing.T) {
+	b, err := loadWin(t, map[string]string{
+		"bin/a-2.rpm": "", "bin/a-1.rpm": "", "bin/a-0.rpm": "",
+		"configs/shared/presets.yaml": "presets:\n  p:\n    upgrade_from: bin/a-0.rpm\n",
+		"configs/test.yaml": `
+environment:
+  image: x
+installers:
+  - pattern: "bin/a-2.rpm"
+    use_preset: p
+    upgrade_from: "bin/a-1.rpm"
+`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := b.Installers[0].UpgradeFrom; len(f) != 1 || f[0].Basename != "a-1.rpm" {
+		t.Errorf("entry must win over preset: %v", f)
+	}
+	_, err = loadWin(t, map[string]string{
+		"bin/a.rpm":         "",
+		"configs/test.yaml": "environment:\n  image: x\ninstallers:\n  - pattern: bin/a.rpm\n    upgrade_from: \"bin/[\"\n",
+	})
+	if err == nil || !strings.Contains(err.Error(), "upgrade_from") {
+		t.Errorf("bad glob: err = %v", err)
+	}
+}

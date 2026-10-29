@@ -167,6 +167,7 @@ run once per matched file.
 | `uninstall_command`| optional | Uninstall command template. Defaults by file extension — **`.sh`, `.ps1` and non-MSI Windows types have no default, so it must be set explicitly for them**. |
 | `upgrade_command`  | optional | Upgrade command template for the `upgrade` task, defaults by file extension (table below) — **`.sh`, `.ps1` and non-MSI Windows types have no default**. Used to upgrade from an **older version of the same package** (pairing rules below). |
 | `version_format`   | optional | File-name template used **only by the `upgrade` task** to pair old and new installers, e.g. `"{package}-{version}-x64.msi"`. Required for upgrade testing on Windows. See [`version_format`](#version_format). |
+| `upgrade_from`     | optional | Path or glob of the **exact old installer(s)** the `upgrade` task starts from, e.g. `"bin/app-0.1.1.rpm"`. Replaces the version-based pairing for this entry; no version parsing. `{VAR}` variables work as in `pattern`. See [Explicit pairing](#explicit-pairing-upgrade_from). |
 | `install_checks`   | optional | Check block run after each installer's install command. All sub-keys optional. |
 | `uninstall_checks` | optional | Check block run after each installer's uninstall command. All sub-keys optional. |
 | `upgrade_checks`   | optional | Check block run after the upgrade command in `upgrade` cases. Same shape as the other check blocks. |
@@ -190,7 +191,7 @@ The `upgrade` task needs installer file names carrying versions:
 - Version ordering: MAJOR.MINOR.PATCH compared numerically; then the suffix —
   numeric suffixes compared numerically (`0.1.1-1` < `0.1.1-2`), non-numeric
   suffixes (`-beta`, `-1.el9`) compared by the files' modification dates.
-- Skips are `⏸ SKIPPED` in the report (never failures), with one of three
+- Skips are `⏸ SKIPPED` in the report (never failures), with one of these
   reasons:
 
   | Reason | Meaning |
@@ -198,10 +199,48 @@ The `upgrade` task needs installer file names carrying versions:
   | `no_version_format` | Windows entry without `version_format` (no built-in Windows rule) |
   | `nonstandard_version` | the file name carries no parsable version (or does not match `version_format`) |
   | `no_older_version` | no older version of the same package in the upgrade pool |
+  | `no_upgrade_from_match` | `upgrade_from` matched no files |
+  | `is_upgrade_from` | the target is the `upgrade_from` installer itself (same name) |
+- **Explicit pairing**: with `upgrade_from` on the entry, none of the above
+  applies — see [Explicit pairing](#explicit-pairing-upgrade_from).
 - `list` prints a `pairing:` line per installer — the parsed version and
   package, or the skip reason it would get — so pairing can be checked before
   any container starts.
 - Full pairing rules: `docs/upgrade-task-plan.md`.
+
+#### Explicit pairing (`upgrade_from`)
+
+Name the exact old installer instead of letting the tool pair by version:
+
+```yaml
+installers:
+  - pattern: "bin/app-*.rpm"            # bin/ holds app-0.1.1.rpm and app-0.1.2.rpm
+    upgrade_from: "bin/app-0.1.1.rpm"
+```
+
+→ one upgrade case, `app-0.1.1.rpm -> app-0.1.2.rpm`; `app-0.1.1.rpm` itself
+is skipped (`is_upgrade_from`) — never `0.1.1 -> 0.1.1`.
+
+- **Pairs**: every file `upgrade_from` matches × every file `pattern`
+  matches, except **same-name** pairs: the same base name (case-insensitive
+  on Windows) is the same version, even in another folder, so it is never
+  upgraded onto itself. No version comparison otherwise — the pair you name
+  runs (a downgrade too).
+- **The old file** may live anywhere (e.g. `bin/old/...`); it is installed
+  with the entry's `install_command` (or the extension default), the new one
+  upgraded with `upgrade_command` and checked with `upgrade_checks`.
+- **Glob and variables**: `upgrade_from: "bin/app-{OLD_VERSION}.rpm"` +
+  `--var OLD_VERSION=0.1.1`. One string only (no list).
+- **No match is not an error**: runs without the `upgrade` task ignore the
+  key; with it, every target of the entry is skipped (`no_upgrade_from_match`)
+  — e.g. when `--var OLD_VERSION` is not given. A malformed glob (`bin/[`)
+  is a load error.
+- **Presets** may set it; the entry's value wins.
+- `version_format` is not used for pairing on such an entry, so unversioned
+  Windows file names work — as long as old and new files have different
+  names.
+- `list` shows `pairing: upgrade from <file>` per old file, or the skip
+  reason.
 
 ### `install_checks` / `uninstall_checks` / `upgrade_checks` (all sub-keys optional)
 
@@ -264,8 +303,8 @@ On **Windows** the rules differ:
 The environment configs share their per-package checks and commands.
 A **preset** = the same keys as an installer entry minus `pattern`:
 `install_command`, `uninstall_command`, `upgrade_command`, `version_format`,
-`install_checks`, `uninstall_checks`, `upgrade_checks` — each optional, any
-combination.
+`upgrade_from`, `install_checks`, `uninstall_checks`, `upgrade_checks` — each
+optional, any combination.
 
 ```yaml
 # configs/shared/presets.yaml

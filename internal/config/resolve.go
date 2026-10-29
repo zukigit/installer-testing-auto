@@ -49,12 +49,18 @@ type ResolvedInstaller struct {
 	// NoVersionFormat marks a windows installer without version_format: the
 	// upgrade task skips it (no built-in version rule on windows).
 	NoVersionFormat bool
-	InstallCmd      string  // template (may be empty -> no default for ext)
-	UninstallCmd    string  // template (may be empty)
-	UpgradeCmd      string  // template (may be empty)
-	InstallChecks   *Checks `yaml:"install_checks"`
-	UninstallChecks *Checks `yaml:"uninstall_checks"`
-	UpgradeChecks   *Checks `yaml:"upgrade_checks"`
+	// UpgradeFromSet marks an entry with upgrade_from: the upgrade task pairs
+	// this target explicitly with UpgradeFrom (the matched old installers,
+	// possibly none) instead of by version.
+	UpgradeFromSet     bool
+	UpgradeFromPattern string
+	UpgradeFrom        []*ResolvedInstaller
+	InstallCmd         string  // template (may be empty -> no default for ext)
+	UninstallCmd       string  // template (may be empty)
+	UpgradeCmd         string  // template (may be empty)
+	InstallChecks      *Checks `yaml:"install_checks"`
+	UninstallChecks    *Checks `yaml:"uninstall_checks"`
+	UpgradeChecks      *Checks `yaml:"upgrade_checks"`
 }
 
 // Expand substitutes {installer}, {basename} and {package} in a command
@@ -100,10 +106,30 @@ func (c *Config) Resolve(path string) (*Bundle, error) {
 		if len(matches) == 0 {
 			return nil, fmt.Errorf("installers[%d].pattern %q matched no files", i, spec.Pattern)
 		}
+		var froms []*ResolvedInstaller
+		if spec.UpgradeFrom != "" {
+			// no match is not an error: the upgrade task skips the targets
+			fromFiles, err := filepath.Glob(spec.UpgradeFrom)
+			if err != nil {
+				return nil, fmt.Errorf("bad upgrade_from pattern %q: %w", spec.UpgradeFrom, err)
+			}
+			for _, local := range fromFiles {
+				f, err := resolveInstaller(spec, local, workdir, osName, vfs[i])
+				if err != nil {
+					return nil, fmt.Errorf("installers[%d]: %w", i, err)
+				}
+				froms = append(froms, f)
+			}
+		}
 		for _, local := range matches {
 			ri, err := resolveInstaller(spec, local, workdir, osName, vfs[i])
 			if err != nil {
 				return nil, fmt.Errorf("installers[%d]: %w", i, err)
+			}
+			if spec.UpgradeFrom != "" {
+				ri.UpgradeFromSet = true
+				ri.UpgradeFromPattern = spec.UpgradeFrom
+				ri.UpgradeFrom = froms
 			}
 			b.Installers = append(b.Installers, ri)
 			if !poolSeen[local] {
@@ -202,6 +228,28 @@ func resolveInstaller(spec InstallerSpec, local, workdir, osName string, vf *Ver
 		}
 	}
 	return ri, nil
+}
+
+// SameInstaller reports whether two installers are the same installer for
+// upgrade_from pairing: the same base name (case-insensitive on windows) —
+// the same name means the exact same version, nothing to upgrade.
+func SameInstaller(a, b *ResolvedInstaller, windows bool) bool {
+	if windows {
+		return strings.EqualFold(a.Basename, b.Basename)
+	}
+	return a.Basename == b.Basename
+}
+
+// UpgradeFromPairs returns the from installers a target pairs with (self
+// pairs dropped).
+func (ri *ResolvedInstaller) UpgradeFromPairs(windows bool) []*ResolvedInstaller {
+	var out []*ResolvedInstaller
+	for _, f := range ri.UpgradeFrom {
+		if !SameInstaller(f, ri, windows) {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // UpgradeIdentity is the pairing identity (UpgradeKey, falling back to

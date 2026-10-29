@@ -182,7 +182,8 @@ func (c *CaseLogger) Check(kind, name string, pass bool, fields map[string]any) 
 }
 
 // CaseSkipped logs that an installer cannot participate in the upgrade task
-// (reason: no_older_version | nonstandard_version | no_version_format).
+// (reason: no_older_version | nonstandard_version | no_version_format |
+// no_upgrade_from_match | is_upgrade_from).
 func (c *CaseLogger) CaseSkipped(reason string) {
 	c.e.write("info", "case_skipped", c.env, c.task, c.installer, c.fromInstaller, map[string]any{"reason": reason})
 }

@@ -393,3 +393,31 @@ func TestWindowsReportAndList(t *testing.T) {
 		}
 	}
 }
+
+func TestUpgradeFromListAndSkipText(t *testing.T) {
+	from := &config.ResolvedInstaller{LocalPath: "bin/old/a.msi", Basename: "a.msi"}
+	other := &config.ResolvedInstaller{LocalPath: "bin/b.msi", Basename: "B.MSI"}
+	bundle := &config.Bundle{
+		Path:   "configs/w.yaml",
+		Config: &config.Config{Environment: config.EnvironmentSpec{Name: "w", OS: "windows", Image: "x", Workdir: `C:\ita`}},
+		Installers: []*config.ResolvedInstaller{
+			{LocalPath: "bin/new.msi", Basename: "new.msi", UpgradeFromSet: true, UpgradeFrom: []*config.ResolvedInstaller{from, other}},
+			{LocalPath: "bin/b.msi", Basename: "b.msi", UpgradeFromSet: true, UpgradeFrom: []*config.ResolvedInstaller{other}},
+			{LocalPath: "bin/c.msi", Basename: "c.msi", UpgradeFromSet: true},
+		},
+	}
+	out := captureStdout(t, func() { ListBundle(bundle) })
+	for _, want := range []string{
+		"    pairing:      upgrade from bin/old/a.msi\n    pairing:      upgrade from bin/b.msi\n",
+		"    pairing:      skipped by upgrade (is_upgrade_from)\n", // b.msi vs B.MSI on windows
+		"    pairing:      skipped by upgrade (no_upgrade_from_match)\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list missing %q\n%s", want, out)
+		}
+	}
+	if skipReasonText("no_upgrade_from_match") != "upgrade_from matched no files" ||
+		skipReasonText("is_upgrade_from") != "this file is the upgrade_from installer" {
+		t.Error("skip texts")
+	}
+}

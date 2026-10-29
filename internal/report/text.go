@@ -86,6 +86,10 @@ func skipReasonText(reason string) string {
 		return "non-standard version"
 	case "no_version_format":
 		return "no version_format configured"
+	case "no_upgrade_from_match":
+		return "upgrade_from matched no files"
+	case "is_upgrade_from":
+		return "this file is the upgrade_from installer"
 	default:
 		return strings.ReplaceAll(reason, "_", " ")
 	}

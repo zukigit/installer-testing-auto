@@ -1,7 +1,9 @@
 # Upgrade From an Explicit Installer Plan (v4.2)
 
-> Status: **REVIEWED — open questions answered (§8).** Plan only; nothing is
-> implemented.
+> Status: **IMPLEMENTED (2026-10-29)** — unit-tested on Linux; README
+> updated. Implementation note: the from installers are resolved per entry
+> (`ResolvedInstaller.UpgradeFrom`, shared by the entry's targets); a
+> malformed `upgrade_from` glob is a load error, a non-matching one is not.
 > Baseline: v4.1 (`docs/windows-defaults-cleanup-watcher-plan.md`) on top of
 > the v3 upgrade task (`docs/upgrade-task-plan.md`), the v3.4 upgrade pool
 > and the v4 `version_format` (`docs/windows-environment-plan.md` §8.2).

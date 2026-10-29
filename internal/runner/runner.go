@@ -98,7 +98,7 @@ type caseDef struct {
 type skipDef struct {
 	bundle *config.Bundle
 	ri     *config.ResolvedInstaller
-	reason string // no_older_version | nonstandard_version | no_version_format
+	reason string // no_older_version | nonstandard_version | no_version_format | no_upgrade_from_match | is_upgrade_from
 }
 
 // Run executes every selected (installer, task) case from every discovered
@@ -261,6 +261,26 @@ func buildUpgradeCases(b *config.Bundle, ri *config.ResolvedInstaller, pool []*c
 	if !upgradeSelected {
 		return
 	}
+	if ri.UpgradeFromSet {
+		// explicit pairing (docs/upgrade-from-plan.md): no version rules
+		if !inScope {
+			return
+		}
+		if len(ri.UpgradeFrom) == 0 {
+			*skips = append(*skips, skipDef{bundle: b, ri: ri, reason: "no_upgrade_from_match"})
+			return
+		}
+		froms := ri.UpgradeFromPairs(b.Config.Environment.IsWindows())
+		if len(froms) == 0 {
+			*skips = append(*skips, skipDef{bundle: b, ri: ri, reason: "is_upgrade_from"})
+			return
+		}
+		for _, f := range froms {
+			*cases = append(*cases, caseDef{bundle: b, ri: ri, t: task.Upgrade{}, from: f})
+			info.total++
+		}
+		return
+	}
 	var older []*config.ResolvedInstaller
 	if _, ok := config.ParseVersion(ri.Version); ok {
 		aMtime := fileMtime(ri.LocalPath)
@@ -383,7 +403,11 @@ func containerRawName(envName string, c caseDef) string {
 	taskPart := c.t.Name()
 	if c.from != nil {
 		base = strings.TrimSuffix(base, filepath.Ext(base))
-		taskPart = "from-" + c.from.Version + "-" + c.t.Name()
+		fromPart := c.from.Version
+		if fromPart == "" { // upgrade_from without a parsable version
+			fromPart = strings.TrimSuffix(c.from.Basename, filepath.Ext(c.from.Basename))
+		}
+		taskPart = "from-" + fromPart + "-" + c.t.Name()
 	}
 	return strings.ToLower("ita-" + envName + "-" + base + "-" + taskPart)
 }

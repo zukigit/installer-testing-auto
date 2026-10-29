@@ -47,7 +47,9 @@ func ListBundle(b *config.Bundle) {
 		fmt.Printf("    install:      %s\n", indentCont(ri.Expand(ri.InstallCmd)))
 		fmt.Printf("    uninstall:    %s\n", indentCont(ri.Expand(ri.UninstallCmd)))
 		fmt.Printf("    upgrade:      %s\n", indentCont(ri.Expand(ri.UpgradeCmd)))
-		fmt.Printf("    pairing:      %s\n", pairingText(ri))
+		for _, line := range pairingLines(ri, env.IsWindows()) {
+			fmt.Printf("    pairing:      %s\n", line)
+		}
 		if c := ri.InstallChecks; c != nil {
 			fmt.Printf("    install_checks:  must_exist=%d must_not_exist=%d commands=%d\n",
 				len(c.MustExist), len(c.MustNotExist), len(c.Commands))
@@ -79,6 +81,26 @@ func indentCont(s string) string {
 // pairingText is the upgrade-pairing detail of one installer: the parsed
 // version and identity, or the skip reason the upgrade task would give it
 // (no_older_version depends on the pool and is not predicted here).
+// pairingLines is pairingText, or for upgrade_from entries one line per
+// from installer (or the skip reason).
+func pairingLines(ri *config.ResolvedInstaller, windows bool) []string {
+	if !ri.UpgradeFromSet {
+		return []string{pairingText(ri)}
+	}
+	if len(ri.UpgradeFrom) == 0 {
+		return []string{"skipped by upgrade (no_upgrade_from_match)"}
+	}
+	froms := ri.UpgradeFromPairs(windows)
+	if len(froms) == 0 {
+		return []string{"skipped by upgrade (is_upgrade_from)"}
+	}
+	var lines []string
+	for _, f := range froms {
+		lines = append(lines, "upgrade from "+f.LocalPath)
+	}
+	return lines
+}
+
 func pairingText(ri *config.ResolvedInstaller) string {
 	switch {
 	case ri.NoVersionFormat:
