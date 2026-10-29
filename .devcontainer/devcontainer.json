@@ -3,7 +3,9 @@
   "image": "docker.io/zukidocker/ubi10:go",
   "remoteUser": "zuki",
   "mounts": [
-    "source=/home/zuki/.ssh,target=/home/zuki/.ssh,type=bind,readonly",
-    "source=/home/zuki/.gitconfig,target=/home/zuki/.gitconfig,type=bind"
+    "source=${localEnv:HOME}/.ssh,target=${localEnv:HOME}/.ssh,type=bind,readonly",
+    "source=${localEnv:HOME}/.gitconfig,target=${localEnv:HOME}/.gitconfig,type=bind",
+    "source=${localEnv:HOME}/.claude,target=${localEnv:HOME}/.claude,type=bind",
+    "source=${localEnv:HOME}/.claude.json,target=${localEnv:HOME}/.claude.json,type=bind"
   ]
 }
