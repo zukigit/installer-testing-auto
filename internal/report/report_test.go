@@ -1,10 +1,12 @@
 package report
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/zukigit/installer-testing-auto/internal/config"
 )
@@ -419,5 +421,41 @@ func TestUpgradeFromListAndSkipText(t *testing.T) {
 	if skipReasonText("no_upgrade_from_match") != "upgrade_from matched no files" ||
 		skipReasonText("is_upgrade_from") != "this file is the upgrade_from installer" {
 		t.Error("skip texts")
+	}
+}
+
+// Windows PowerShell 5.1 `> run.jsonl` writes UTF-16LE with a BOM and CRLF.
+func TestParseUTF16AndBOM(t *testing.T) {
+	text := strings.ReplaceAll(strings.TrimSpace(sampleNDJSON), "\n", "\r\n\r\n") + "\r\n"
+	enc := func(bigEndian bool) []byte {
+		units := utf16.Encode([]rune(text))
+		out := []byte{0xFF, 0xFE}
+		if bigEndian {
+			out = []byte{0xFE, 0xFF}
+		}
+		for _, u := range units {
+			if bigEndian {
+				out = append(out, byte(u>>8), byte(u))
+			} else {
+				out = append(out, byte(u), byte(u>>8))
+			}
+		}
+		return out
+	}
+	inputs := map[string][]byte{
+		"utf16le": enc(false),
+		"utf16be": enc(true),
+		"utf8bom": append([]byte{0xEF, 0xBB, 0xBF}, text...),
+		"utf8":    []byte(text),
+	}
+	for name, in := range inputs {
+		run, err := Parse(bytes.NewReader(in))
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if !run.sawRunStart || !run.sawRunEnd || len(run.allCases) != 3 {
+			t.Errorf("%s: parsed run_start=%v run_end=%v cases=%d", name, run.sawRunStart, run.sawRunEnd, len(run.allCases))
+		}
 	}
 }

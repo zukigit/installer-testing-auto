@@ -96,6 +96,9 @@ GOOS=windows GOARCH=amd64 go build -mod=vendor -o installer-test-exec.exe ./cmd/
 .\installer-test-exec.exe report --from run.jsonl
 ```
 
+Windows PowerShell 5.1 writes `> run.jsonl` as UTF-16; `report` reads
+UTF-16 and UTF-8 (with or without a byte-order mark) alike.
+
 ## Example reports
 
 A report generated from `run.jsonl` with `./installer-test-exec report --from run.jsonl`

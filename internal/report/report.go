@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/zukigit/installer-testing-auto/internal/config"
 )
@@ -241,6 +242,10 @@ func Parse(r io.Reader) (*Run, error) {
 		envByKey:  map[string]*envRec{},
 		caseByKey: map[string]*caseRec{},
 	}
+	r, err := decodeLogEncoding(r)
+	if err != nil {
+		return nil, err
+	}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	lineNo := 0
@@ -260,6 +265,37 @@ func Parse(r io.Reader) (*Run, error) {
 		return nil, err
 	}
 	return run, nil
+}
+
+// decodeLogEncoding returns UTF-8 log text. Windows PowerShell 5.1 writes
+// `> run.jsonl` as UTF-16LE with a byte-order mark; UTF-16BE and UTF-8 with
+// a BOM are accepted too. Input without a BOM is passed through unchanged.
+func decodeLogEncoding(r io.Reader) (io.Reader, error) {
+	br := bufio.NewReader(r)
+	head, _ := br.Peek(3)
+	switch {
+	case len(head) >= 3 && head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF:
+		_, _ = br.Discard(3)
+		return br, nil
+	case len(head) >= 2 && (head[0] == 0xFF && head[1] == 0xFE || head[0] == 0xFE && head[1] == 0xFF):
+		data, err := io.ReadAll(br)
+		if err != nil {
+			return nil, err
+		}
+		little := data[0] == 0xFF
+		data = data[2:]
+		units := make([]uint16, len(data)/2)
+		for i := range units {
+			lo, hi := data[2*i], data[2*i+1]
+			if !little {
+				lo, hi = hi, lo
+			}
+			units[i] = uint16(lo) | uint16(hi)<<8
+		}
+		return strings.NewReader(string(utf16.Decode(units))), nil
+	default:
+		return br, nil
+	}
 }
 
 func (r *Run) env(name string) *envRec {
