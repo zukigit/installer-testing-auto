@@ -9,7 +9,12 @@
       "WebFetch",
       "WebSearch",
       "Skill",
-      "Bash(git check-ignore *)"
+      "Bash(git check-ignore *)",
+      "Bash(python3 -)",
+      "Bash(go build *)",
+      "Bash(gofmt -w internal/env)",
+      "Bash(go vet *)",
+      "Bash(go test *)"
     ],
     "deny": [
       "Edit(/.git/**)",

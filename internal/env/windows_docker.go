@@ -8,12 +8,12 @@ package env
 // would only build for GOOS=windows).
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +21,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	stdcopy "github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
 
 	"github.com/zukigit/installer-testing-auto/internal/shell"
@@ -29,6 +30,11 @@ import (
 // DefaultWindowsWorkdir is the in-container directory installers are copied
 // to in Windows environments when environment.workdir is not set.
 const DefaultWindowsWorkdir = `C:\ita`
+
+// stageMount is where the host staging directory is mounted (read-only)
+// inside the container. Copy goes through it because the Docker API cannot
+// copy files into a running Hyper-V isolated container.
+const stageMount = `C:\ita-stage`
 
 // windowsKeepAlive keeps the container running for the whole case (the
 // Linux side uses `sleep infinity`).
@@ -41,7 +47,6 @@ type dockerAPI interface {
 	ImagePull(ctx context.Context, ref string, opts client.ImagePullOptions) (client.ImagePullResponse, error)
 	ContainerCreate(ctx context.Context, opts client.ContainerCreateOptions) (client.ContainerCreateResult, error)
 	ContainerStart(ctx context.Context, id string, opts client.ContainerStartOptions) (client.ContainerStartResult, error)
-	CopyToContainer(ctx context.Context, id string, opts client.CopyToContainerOptions) (client.CopyToContainerResult, error)
 	ExecCreate(ctx context.Context, id string, opts client.ExecCreateOptions) (client.ExecCreateResult, error)
 	ExecAttach(ctx context.Context, execID string, opts client.ExecAttachOptions) (client.ExecAttachResult, error)
 	ExecInspect(ctx context.Context, execID string, opts client.ExecInspectOptions) (client.ExecInspectResult, error)
@@ -78,6 +83,7 @@ type WindowsDockerEnvironment struct {
 	clients                             clientProvider
 	api                                 dockerAPI
 	id                                  string
+	stageDir                            string // host staging directory, mounted at stageMount
 }
 
 func newWindowsDocker(opts Options, clients clientProvider) *WindowsDockerEnvironment {
@@ -109,6 +115,14 @@ func (e *WindowsDockerEnvironment) Start(ctx context.Context) error {
 	if err := e.ensureImage(ctx); err != nil {
 		return err
 	}
+	stageDir, err := os.MkdirTemp("", "ita-stage-")
+	if err != nil {
+		return fmt.Errorf("create staging directory: %w", err)
+	}
+	if stageDir, err = filepath.Abs(stageDir); err != nil {
+		os.RemoveAll(stageDir)
+		return fmt.Errorf("create staging directory: %w", err)
+	}
 	labels := map[string]string{"ita": "true", "ita.env": e.name}
 	created, err := api.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: e.containerName,
@@ -117,16 +131,24 @@ func (e *WindowsDockerEnvironment) Start(ctx context.Context) error {
 			Cmd:    windowsKeepAlive,
 			Labels: labels,
 		},
-		HostConfig: &container.HostConfig{Isolation: container.Isolation(e.isolation)},
+		HostConfig: &container.HostConfig{
+			Isolation: container.Isolation(e.isolation),
+			Mounts: []mount.Mount{{
+				Type: mount.TypeBind, Source: stageDir, Target: stageMount, ReadOnly: true,
+			}},
+		},
 	})
 	if err != nil {
+		os.RemoveAll(stageDir)
 		return fmt.Errorf("create container (image %q): %w", e.image, err)
 	}
 	if _, err := api.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		_, _ = api.ContainerRemove(context.WithoutCancel(ctx), created.ID, client.ContainerRemoveOptions{Force: true})
+		os.RemoveAll(stageDir)
 		return fmt.Errorf("start container (image %q): %w", e.image, err)
 	}
 	e.id = created.ID
+	e.stageDir = stageDir
 	return nil
 }
 
@@ -149,9 +171,10 @@ func (e *WindowsDockerEnvironment) ensureImage(ctx context.Context) error {
 	return nil
 }
 
-// Copy uploads one file: the destination directory is created with the
-// PowerShell dialect, then a tar holding one entry named by the base name is
-// extracted into that directory (the docker cp mechanism, any drive).
+// Copy uploads one file. The Docker API cannot copy into a running Hyper-V
+// isolated container, so the file is placed in the host staging directory
+// (mounted read-only at C:\ita-stage) and copied to dest inside the
+// container with Copy-Item. Works the same for process isolation.
 func (e *WindowsDockerEnvironment) Copy(ctx context.Context, src, dest string) error {
 	if e.id == "" {
 		return fmt.Errorf("environment %s not started", e.name)
@@ -160,52 +183,43 @@ func (e *WindowsDockerEnvironment) Copy(ctx context.Context, src, dest string) e
 	if base == "" {
 		return fmt.Errorf("copy %s -> %s: destination has no file name", src, dest)
 	}
+	staged := filepath.Join(e.stageDir, base)
+	if err := copyFile(src, staged); err != nil {
+		return fmt.Errorf("copy %s -> %s: stage file: %w", src, dest, err)
+	}
+	defer os.Remove(staged) // the container has its own copy afterwards
 	ps := shell.PowerShell
-	if out, errOut, code, err := e.Exec(ctx, ps.Command(ps.MkdirAll(dir))); err != nil || code != 0 {
-		return fmt.Errorf("mkdir %s: %s%s (exit %d, err %v)", dir, out, errOut, code, err)
-	}
-	f, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("copy %s -> %s: %w", src, dest, err)
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return fmt.Errorf("copy %s -> %s: %w", src, dest, err)
-	}
-	pr, pw := io.Pipe()
-	go func() {
-		pw.CloseWithError(writeSingleFileTar(pw, base, fi, f))
-	}()
-	_, err = e.api.CopyToContainer(ctx, e.id, client.CopyToContainerOptions{
-		DestinationPath: dir,
-		Content:         pr,
-	})
-	pr.CloseWithError(io.ErrClosedPipe) // unblock the writer if the upload stopped early
-	if err != nil {
-		return fmt.Errorf("copy %s -> %s: %w", src, dest, err)
+	script := ps.MkdirAll(dir) + "\n" +
+		"Copy-Item -LiteralPath " + ps.Quote(stageMount+`\`+base) +
+		" -Destination " + ps.Quote(dest) + " -Force -ErrorAction Stop"
+	out, errOut, code, err := e.Exec(ctx, ps.Command(script))
+	if err != nil || code != 0 {
+		return fmt.Errorf("copy %s -> %s: %s%s (exit %d, err %v)", src, dest,
+			strings.TrimSpace(out), strings.TrimSpace(errOut), code, err)
 	}
 	return nil
 }
 
-// writeSingleFileTar writes a tar stream with one regular file entry.
-func writeSingleFileTar(w io.Writer, name string, fi os.FileInfo, r io.Reader) error {
-	tw := tar.NewWriter(w)
-	hdr := &tar.Header{
-		Name:     name,
-		Mode:     0o644, // file mode is irrelevant on Windows
-		Size:     fi.Size(),
-		ModTime:  fi.ModTime(),
-		Typeflag: tar.TypeReg,
-		Format:   tar.FormatPAX,
+// copyFile copies a local file (hard link when possible, else a full copy).
+func copyFile(src, dst string) error {
+	_ = os.Remove(dst)
+	if err := os.Link(src, dst); err == nil {
+		return nil
 	}
-	if err := tw.WriteHeader(hdr); err != nil {
+	in, err := os.Open(src)
+	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(tw, r); err != nil {
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
 		return err
 	}
-	return tw.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // splitWindowsPath splits a container path at its last separator (\ or /).
@@ -271,13 +285,16 @@ func normalizeOutput(s string) string {
 	return strings.ReplaceAll(s, "\r\n", "\n")
 }
 
-// Stop force-removes the container.
+// Stop force-removes the container and its host staging directory.
 func (e *WindowsDockerEnvironment) Stop(ctx context.Context) error {
 	if e.id == "" {
 		return nil
 	}
 	if _, err := e.api.ContainerRemove(ctx, e.id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
 		return fmt.Errorf("remove container %s: %w", e.id, err)
+	}
+	if e.stageDir != "" {
+		_ = os.RemoveAll(e.stageDir)
 	}
 	return nil
 }

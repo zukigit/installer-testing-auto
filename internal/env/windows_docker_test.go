@@ -1,7 +1,6 @@
 package env
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -19,6 +18,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	stdcopy "github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/jsonstream"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
 
 	"github.com/zukigit/installer-testing-auto/internal/shell"
@@ -38,8 +38,7 @@ type fakeDocker struct {
 	startErr     error
 	removed      []string
 	removeOpts   []client.ContainerRemoveOptions
-	copies       []client.CopyToContainerOptions
-	copiedTar    []map[string]string // entry name -> content
+	onExec       func(cmd []string) // called at every ExecCreate
 	execCmds     [][]string
 	execs        []fakeExec // scripted results, in order; default exit 0
 	cur          *fakeExec
@@ -75,28 +74,11 @@ func (f *fakeDocker) ContainerStart(ctx context.Context, id string, _ client.Con
 	return client.ContainerStartResult{}, f.startErr
 }
 
-func (f *fakeDocker) CopyToContainer(ctx context.Context, id string, opts client.CopyToContainerOptions) (client.CopyToContainerResult, error) {
-	entries := map[string]string{}
-	tr := tar.NewReader(opts.Content)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return client.CopyToContainerResult{}, err
-		}
-		b, _ := io.ReadAll(tr)
-		entries[hdr.Name] = string(b)
-	}
-	opts.Content = nil
-	f.copies = append(f.copies, opts)
-	f.copiedTar = append(f.copiedTar, entries)
-	return client.CopyToContainerResult{}, nil
-}
-
 func (f *fakeDocker) ExecCreate(ctx context.Context, id string, opts client.ExecCreateOptions) (client.ExecCreateResult, error) {
 	f.execCmds = append(f.execCmds, opts.Cmd)
+	if f.onExec != nil {
+		f.onExec(opts.Cmd)
+	}
 	f.cur = &fakeExec{}
 	if len(f.execs) > 0 {
 		f.cur = &f.execs[0]
@@ -164,6 +146,16 @@ func TestWindowsStartCreateArgs(t *testing.T) {
 	if e.ContainerID() != "ctr123" || e.Workdir() != `C:\ita` || e.Shell() != shell.PowerShell {
 		t.Errorf("id=%q workdir=%q shell=%v", e.ContainerID(), e.Workdir(), e.Shell().Name())
 	}
+	// the host staging directory is bind-mounted read-only at C:\ita-stage
+	m := c.HostConfig.Mounts
+	if len(m) != 1 || m[0].Type != mount.TypeBind || m[0].Source != e.stageDir ||
+		m[0].Target != `C:\ita-stage` || !m[0].ReadOnly {
+		t.Errorf("mounts = %+v (stageDir %q)", m, e.stageDir)
+	}
+	if fi, err := os.Stat(e.stageDir); err != nil || !fi.IsDir() {
+		t.Errorf("staging dir missing: %v", err)
+	}
+	_ = e.Stop(context.Background())
 }
 
 func TestWindowsStartFailureRemovesContainer(t *testing.T) {
@@ -175,6 +167,10 @@ func TestWindowsStartFailureRemovesContainer(t *testing.T) {
 	}
 	if !reflect.DeepEqual(f.removed, []string{"ctr123"}) || e.ContainerID() != "" || len(f.pulled) != 0 {
 		t.Errorf("removed=%v id=%q pulled=%v", f.removed, e.ContainerID(), f.pulled)
+	}
+	stage := f.created[0].HostConfig.Mounts[0].Source
+	if _, err := os.Stat(stage); !os.IsNotExist(err) {
+		t.Errorf("staging dir %s must be removed on start failure (err %v)", stage, err)
 	}
 }
 
@@ -188,17 +184,43 @@ func TestWindowsCopy(t *testing.T) {
 	if err := e.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	defer e.Stop(context.Background())
+	var stagedAtExec string
+	f.onExec = func([]string) {
+		b, _ := os.ReadFile(filepath.Join(e.stageDir, "app-1.0.0.msi"))
+		stagedAtExec = string(b)
+	}
 	if err := e.Copy(context.Background(), src, `D:\work\app-1.0.0.msi`); err != nil {
 		t.Fatal(err)
 	}
-	if s, _ := shell.ScriptOf(f.execCmds[0]); s != `New-Item -ItemType Directory -Force -Path 'D:\work' | Out-Null` {
-		t.Errorf("mkdir script = %q", s)
+	if len(f.execCmds) != 1 {
+		t.Fatalf("want one exec (mkdir + Copy-Item), got %d", len(f.execCmds))
 	}
-	if f.copies[0].DestinationPath != `D:\work` {
-		t.Errorf("destination = %q", f.copies[0].DestinationPath)
+	want := `New-Item -ItemType Directory -Force -Path 'D:\work' | Out-Null` + "\n" +
+		`Copy-Item -LiteralPath 'C:\ita-stage\app-1.0.0.msi' -Destination 'D:\work\app-1.0.0.msi' -Force -ErrorAction Stop`
+	if s, _ := shell.ScriptOf(f.execCmds[0]); s != want {
+		t.Errorf("copy script =\n%s\nwant\n%s", s, want)
 	}
-	if !reflect.DeepEqual(f.copiedTar[0], map[string]string{"app-1.0.0.msi": "MSI"}) {
-		t.Errorf("tar entries = %v", f.copiedTar[0])
+	if stagedAtExec != "MSI" {
+		t.Errorf("file not staged when Copy-Item ran: %q", stagedAtExec)
+	}
+	if _, err := os.Stat(filepath.Join(e.stageDir, "app-1.0.0.msi")); !os.IsNotExist(err) {
+		t.Errorf("staged file must be removed after the copy (err %v)", err)
+	}
+}
+
+func TestWindowsCopyFailure(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "a.msi")
+	_ = os.WriteFile(src, []byte("x"), 0o644)
+	f := &fakeDocker{execs: []fakeExec{{stderr: "Copy-Item : Access is denied", code: 1}}}
+	e := newFakeWin(f, Options{Name: "win", Image: "x"})
+	if err := e.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer e.Stop(context.Background())
+	err := e.Copy(context.Background(), src, `C:\ita\a.msi`)
+	if err == nil || !strings.Contains(err.Error(), "Access is denied") || !strings.Contains(err.Error(), "exit 1") {
+		t.Errorf("err = %v", err)
 	}
 }
 
@@ -227,6 +249,9 @@ func TestWindowsStop(t *testing.T) {
 	}
 	if !reflect.DeepEqual(f.removed, []string{"ctr123"}) || !f.removeOpts[0].Force {
 		t.Errorf("removed=%v opts=%+v", f.removed, f.removeOpts)
+	}
+	if _, err := os.Stat(e.stageDir); !os.IsNotExist(err) {
+		t.Errorf("staging dir must be removed on Stop (err %v)", err)
 	}
 }
 

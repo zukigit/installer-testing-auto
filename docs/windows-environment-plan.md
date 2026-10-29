@@ -299,7 +299,7 @@ only change is `Shell()` returning `shell.POSIX` (§5.3).
 | `Environment` method | Docker client call(s) |
 |---|---|
 | `Start` | `ImagePull` when the image is missing → `ContainerCreate` (image, keep-alive cmd §6.1, `HostConfig.Isolation` §4.3, deterministic name, `ita` labels) → `ContainerStart` |
-| `Copy` | `MkdirAll` via `Exec` (§6.2) → `CopyToContainer` |
+| `Copy` | stage file in the mounted host folder → `Copy-Item` via `Exec` (§6.2) |
 | `Exec` | `ExecCreate` (stdout+stderr attached) → `ExecAttach` → `stdcopy.StdCopy` → `ExecInspect` for the exit code (§6.3) |
 | `Stop` | `ContainerRemove` with `Force: true` |
 | `Shell` | `shell.PowerShell` |
@@ -319,12 +319,20 @@ host only. ~150 lines.
 
 ### 6.2 Copy
 
-1. `MkdirAll(dir)` via the PowerShell dialect.
-2. `CopyToContainer` with `DestinationPath: <workdir>` (e.g. `C:\ita`) and a
-   tar holding **one entry named by the base name** — the same mechanism as
-   `docker cp` (spike S3). The target directory is passed as a Windows path,
-   so any drive works (no `C:`-only restriction).
-3. File mode is irrelevant on Windows.
+**Changed after the first host run (2026-10-29):** the Docker API refuses
+`CopyToContainer` for a *running* Hyper-V isolated container ("filesystem
+operations against a running Hyper-V container are not supported"), and
+Windows 10/11 hosts can only use Hyper-V isolation. Copy therefore goes
+through a staging folder, the same way for both isolation modes:
+
+1. `Start` creates a host temp directory (`%TEMP%\ita-stage-*`) and
+   bind-mounts it read-only at `C:\ita-stage` in the container.
+2. `Copy` places the file in the staging directory (hard link, else a full
+   copy), then runs one PowerShell script in the container:
+   `MkdirAll(dir)` + `Copy-Item -LiteralPath 'C:\ita-stage\<base>' -Destination '<dest>' -Force -ErrorAction Stop`.
+   The staged file is deleted afterwards; any drive works as destination.
+3. `Stop` removes the staging directory with the container (`--keep` leaves
+   both).
 
 ### 6.3 Exec output
 

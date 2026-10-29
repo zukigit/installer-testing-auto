@@ -586,3 +586,9 @@ labelled `ita=true`):
 ```powershell
 docker ps -aq --filter name=ita- | % { docker rm -f $_ }
 ```
+
+Installers reach the container through a host staging folder
+(`%TEMP%\ita-stage-*`, mounted read-only at `C:\ita-stage`), because Docker
+cannot copy files into a running Hyper-V container. The folders are removed
+with their containers; after a hard kill, delete leftovers with
+`Remove-Item "$env:TEMP\ita-stage-*" -Recurse -Force`.
