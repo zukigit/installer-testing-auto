@@ -84,6 +84,12 @@ func skipReasonText(reason string) string {
 		return "no older version"
 	case "nonstandard_version":
 		return "non-standard version"
+	case "no_version_format":
+		return "no version_format configured"
+	case "no_upgrade_from_match":
+		return "upgrade_from matched no files"
+	case "is_upgrade_from":
+		return "this file is the upgrade_from installer"
 	default:
 		return strings.ReplaceAll(reason, "_", " ")
 	}
@@ -190,7 +196,11 @@ func (r *Run) RenderText(w io.Writer, details bool) {
 	var passedCases, failedCases, incomplete, skippedCases int
 
 	for _, e := range r.envs {
-		fmt.Fprintf(w, "env %s (image %s, workdir %s)\n", e.name, e.image, e.workdir)
+		if e.os != "" {
+			fmt.Fprintf(w, "env %s (%s, image %s, workdir %s)\n", e.name, e.os, e.image, e.workdir)
+		} else {
+			fmt.Fprintf(w, "env %s (image %s, workdir %s)\n", e.name, e.image, e.workdir)
+		}
 		fmt.Fprintln(w)
 		for _, g := range r.groups(e) {
 			fmt.Fprintf(w, "  %s\n", g.installer)

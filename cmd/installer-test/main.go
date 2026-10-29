@@ -18,6 +18,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/zukigit/installer-testing-auto/internal/cleanup"
 	"github.com/zukigit/installer-testing-auto/internal/config"
 	"github.com/zukigit/installer-testing-auto/internal/report"
 	"github.com/zukigit/installer-testing-auto/internal/runner"
@@ -31,6 +32,7 @@ Usage:
                         [--var NAME=VALUE ...]
   installer-test list   [--config GLOB] [--var NAME=VALUE ...]
   installer-test report --from FILE|-
+  installer-test cleanup [--run ID] [--include-kept]
 
 Subcommands:
   run     test installer files: every installer x task pair is an independent
@@ -43,9 +45,15 @@ Subcommands:
           the older versions of the same package; skipped otherwise).
   list    dry-run: show environments, matched installers and resolved commands
   report  render a text report from captured run logs (NDJSON)
+  cleanup remove leftover containers and files of earlier runs (normally
+          not needed: every run with Windows environments starts a watcher
+          process that cleans up when the run ends, however it ends; Linux
+          containers are removed by testcontainers). Containers kept with --keep
+          stay unless --include-kept is given.
 
 Flags (run):
-  --config GLOB      config glob; default: configs/*.yaml (all environments)
+  --config GLOB      config glob; default: configs/*.yaml (all Linux environments;
+                     os: windows configs need an explicit --config)
   --task LIST        comma-separated tasks; default: all tasks
                      available: fresh-install, uninstall, upgrade (standalone)
   --installer GLOB   filter the package list, e.g. "bin/my-app-*.rpm"
@@ -57,13 +65,19 @@ Flags (run):
                      (the pattern then usually matches no files -> load error)
 
 Flags (list):
-  --config GLOB      config glob; default: configs/*.yaml (all environments)
+  --config GLOB      config glob; default: configs/*.yaml (all Linux environments;
+                     os: windows configs need an explicit --config)
   --var NAME=VALUE   same as for run
 
 Flags (report):
   --from FILE|-      NDJSON log file, or stdin with "-"
   --details          show full per-task details (steps + install_checks /
                      uninstall_checks sections) for every case, pass and fail
+
+Flags (cleanup):
+  --run ID           only this run (ID from the ita-run-<ID> folder in the temp
+                     directory, or the ita.run container label)
+  --include-kept     also remove containers kept with --keep
 
 Examples:
   installer-test run | tee run.jsonl
@@ -90,6 +104,10 @@ func realMain() int {
 		return cmdList(os.Args[2:])
 	case "report":
 		return cmdReport(os.Args[2:])
+	case "cleanup":
+		return cmdCleanup(os.Args[2:])
+	case cleanup.WatchCommand:
+		return cmdWatch(os.Args[2:])
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return 0
@@ -101,7 +119,7 @@ func realMain() int {
 
 func cmdRun(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	configPattern := fs.String("config", "", "config glob (default: configs/*.yaml)")
+	configPattern := fs.String("config", "", "config glob (default: configs/*.yaml, excluding os: windows configs)")
 	taskList := fs.String("task", "", "comma-separated tasks (default: all)")
 	installer := fs.String("installer", "", "glob filter for the package list")
 	parallel := fs.Int("parallel", runner.DefaultParallel, "max containers running at the same time")
@@ -133,12 +151,66 @@ func cmdRun(args []string) int {
 		Vars:          vars,
 		Parallel:      *parallel,
 		Keep:          *keep,
+		StartCleanup:  startCleanup,
 	})
+}
+
+// startCleanup creates the run directory and starts the detached cleanup
+// watcher for runs with Windows cases.
+func startCleanup() (string, string, error) {
+	runID := cleanup.NewRunID()
+	runDir := cleanup.RunDir(os.TempDir(), runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return "", "", fmt.Errorf("create run directory: %w", err)
+	}
+	if _, err := cleanup.Spawn(runID, os.TempDir()); err != nil {
+		os.RemoveAll(runDir)
+		return "", "", err
+	}
+	return runID, runDir, nil
+}
+
+// cmdWatch is the hidden watcher process: it waits for the runner to exit
+// (EOF on stdin) and cleans up the run.
+func cmdWatch(args []string) int {
+	fs := flag.NewFlagSet(cleanup.WatchCommand, flag.ContinueOnError)
+	runID := fs.String("run", "", "run id")
+	tempDir := fs.String("temp", "", "temp directory holding the run directory")
+	if err := fs.Parse(args); err != nil || *runID == "" {
+		return 2
+	}
+	// a watcher must never die from the runner's console signals
+	signal.Ignore(os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	if err := cleanup.Watch(os.Stdin, cleanup.Options{RunID: *runID, TempDir: *tempDir}); err != nil {
+		return 1
+	}
+	return 0
+}
+
+func cmdCleanup(args []string) int {
+	fs := flag.NewFlagSet("cleanup", flag.ContinueOnError)
+	runID := fs.String("run", "", "only this run id (default: all runs)")
+	includeKept := fs.Bool("include-kept", false, "also remove containers kept with --keep")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "unexpected argument(s): %s\n", strings.Join(fs.Args(), " "))
+		return 2
+	}
+	err := cleanup.Clean(context.Background(), cleanup.Options{
+		RunID: *runID, IncludeKept: *includeKept, Out: os.Stdout,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR   %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func cmdList(args []string) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	configPattern := fs.String("config", "", "config glob (default: configs/*.yaml)")
+	configPattern := fs.String("config", "", "config glob (default: configs/*.yaml, excluding os: windows configs)")
 	vars := varFlags{}
 	fs.Var(vars, "var", "pattern variable NAME=VALUE ({NAME} in installer patterns); repeatable")
 	if err := fs.Parse(args); err != nil {

@@ -105,6 +105,12 @@ func applyPreset(spec *InstallerSpec, preset *InstallerSpec) {
 	if spec.UpgradeCommand == "" {
 		spec.UpgradeCommand = preset.UpgradeCommand
 	}
+	if spec.VersionFormat == "" {
+		spec.VersionFormat = preset.VersionFormat
+	}
+	if spec.UpgradeFrom == "" {
+		spec.UpgradeFrom = preset.UpgradeFrom
+	}
 	if spec.InstallChecks == nil {
 		spec.InstallChecks = preset.InstallChecks
 	}

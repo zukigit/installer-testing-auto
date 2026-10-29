@@ -7,11 +7,19 @@ import (
 	"context"
 	"fmt"
 	"sort"
+
+	"github.com/zukigit/installer-testing-auto/internal/cleanup"
+	"github.com/zukigit/installer-testing-auto/internal/shell"
 )
 
 const (
-	// TypeDocker is the container-based environment (testcontainers-go).
+	// TypeDocker is the container-based environment: Linux containers via
+	// testcontainers-go, Windows containers via the plain Docker client.
 	TypeDocker = "docker"
+
+	// OSLinux and OSWindows are the environment.os values.
+	OSLinux   = "linux"
+	OSWindows = "windows"
 )
 
 // Environment is one provisioned target (container, VM, remote host...).
@@ -25,6 +33,8 @@ type Environment interface {
 	Exec(ctx context.Context, cmd []string) (stdout, stderr string, exitCode int, err error)
 	// Stop tears the environment down.
 	Stop(ctx context.Context) error
+	// Shell returns the command dialect spoken inside the environment.
+	Shell() shell.Dialect
 }
 
 // Options describes one unstarted environment.
@@ -37,6 +47,26 @@ type Options struct {
 	Workdir string
 	// ContainerName is the deterministic container name (docker environments).
 	ContainerName string
+	// OS is the environment OS: "" / "linux" or "windows".
+	OS string
+	// Isolation is the Windows container isolation ("process", "hyperv" or
+	// "" for the daemon default). Windows only.
+	Isolation string
+	// RunID labels the container (ita.run=<id>) so the cleanup watcher can
+	// find it; "" = no run label (tests, direct use).
+	RunID string
+	// RunDir is the run's host directory for files the environment creates
+	// (Windows staging folders); "" = the system temp directory.
+	RunDir string
+}
+
+// Labels returns the container labels for one run.
+func Labels(envName, runID string) map[string]string {
+	l := map[string]string{cleanup.LabelManaged: "true", "ita.env": envName}
+	if runID != "" {
+		l[cleanup.LabelRun] = runID
+	}
+	return l
 }
 
 // Factory builds an unstarted Environment for a registered type.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/zukigit/installer-testing-auto/internal/config"
 )
@@ -19,12 +20,22 @@ func ListError(path string, err error) {
 	fmt.Printf("ERROR   config %s: %v\n", path, err)
 }
 
+// ListSkippedWindows reports an os: windows config left out of the default
+// config set (no --config given).
+func ListSkippedWindows(path string) {
+	fmt.Printf("SKIPPED config %s: os windows is not in the default set (use --config)\n", path)
+}
+
 // ListBundle prints the resolved bundle for the `list` subcommand.
 func ListBundle(b *config.Bundle) {
 	env := b.Config.Environment
 	fmt.Printf("env %s\n", b.EnvName())
 	fmt.Printf("  config:   %s\n", b.Path)
 	fmt.Printf("  type:     %s\n", env.Type)
+	fmt.Printf("  os:       %s\n", osOrDefault(env.OS))
+	if env.Isolation != "" {
+		fmt.Printf("  isolation: %s\n", env.Isolation)
+	}
 	fmt.Printf("  image:    %s\n", env.Image)
 	fmt.Printf("  workdir:  %s\n", env.Workdir)
 	if len(b.Installers) == 0 {
@@ -34,9 +45,12 @@ func ListBundle(b *config.Bundle) {
 	for _, ri := range b.Installers {
 		fmt.Printf("  installer %s\n", ri.LocalPath)
 		fmt.Printf("    in-container: %s\n", ri.ContainerPath)
-		fmt.Printf("    install:      %s\n", ri.Expand(ri.InstallCmd))
-		fmt.Printf("    uninstall:    %s\n", ri.Expand(ri.UninstallCmd))
-		fmt.Printf("    upgrade:      %s\n", ri.Expand(ri.UpgradeCmd))
+		fmt.Printf("    install:      %s\n", indentCont(ri.Expand(ri.InstallCmd)))
+		fmt.Printf("    uninstall:    %s\n", indentCont(ri.Expand(ri.UninstallCmd)))
+		fmt.Printf("    upgrade:      %s\n", indentCont(ri.Expand(ri.UpgradeCmd)))
+		for _, line := range pairingLines(ri, env.IsWindows()) {
+			fmt.Printf("    pairing:      %s\n", line)
+		}
 		if c := ri.InstallChecks; c != nil {
 			fmt.Printf("    install_checks:  must_exist=%d must_not_exist=%d commands=%d\n",
 				len(c.MustExist), len(c.MustNotExist), len(c.Commands))
@@ -49,6 +63,53 @@ func ListBundle(b *config.Bundle) {
 			fmt.Printf("    upgrade_checks:   must_exist=%d must_not_exist=%d commands=%d\n",
 				len(c.MustExist), len(c.MustNotExist), len(c.Commands))
 		}
+	}
+}
+
+func osOrDefault(os string) string {
+	if os == "" {
+		return config.OSLinux
+	}
+	return os
+}
+
+// indentCont aligns the continuation lines of multi-line commands (e.g. the
+// .msi defaults) under the first line.
+func indentCont(s string) string {
+	return strings.ReplaceAll(s, "\n", "\n"+strings.Repeat(" ", len("    install:      ")))
+}
+
+// pairingText is the upgrade-pairing detail of one installer: the parsed
+// version and identity, or the skip reason the upgrade task would give it
+// (no_older_version depends on the pool and is not predicted here).
+// pairingLines is pairingText, or for upgrade_from entries one line per
+// from installer (or the skip reason).
+func pairingLines(ri *config.ResolvedInstaller, windows bool) []string {
+	if !ri.UpgradeFromSet {
+		return []string{pairingText(ri)}
+	}
+	if len(ri.UpgradeFrom) == 0 {
+		return []string{"skipped by upgrade (no_upgrade_from_match)"}
+	}
+	froms := ri.UpgradeFromPairs(windows)
+	if len(froms) == 0 {
+		return []string{"skipped by upgrade (is_upgrade_from)"}
+	}
+	var lines []string
+	for _, f := range froms {
+		lines = append(lines, "upgrade from "+f.LocalPath)
+	}
+	return lines
+}
+
+func pairingText(ri *config.ResolvedInstaller) string {
+	switch {
+	case ri.NoVersionFormat:
+		return "skipped by upgrade (no_version_format)"
+	case ri.Version == "":
+		return "skipped by upgrade (nonstandard_version)"
+	default:
+		return fmt.Sprintf("version=%s package=%s", ri.Version, ri.UpgradeIdentity())
 	}
 }
 
@@ -145,6 +206,7 @@ type envRec struct {
 	name    string
 	image   string
 	workdir string
+	os      string // "" for linux (env_start omits it)
 	cases   []*caseRec
 	sawEnd  bool
 	passed  int
@@ -180,6 +242,10 @@ func Parse(r io.Reader) (*Run, error) {
 		envByKey:  map[string]*envRec{},
 		caseByKey: map[string]*caseRec{},
 	}
+	r, err := decodeLogEncoding(r)
+	if err != nil {
+		return nil, err
+	}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	lineNo := 0
@@ -199,6 +265,37 @@ func Parse(r io.Reader) (*Run, error) {
 		return nil, err
 	}
 	return run, nil
+}
+
+// decodeLogEncoding returns UTF-8 log text. Windows PowerShell 5.1 writes
+// `> run.jsonl` as UTF-16LE with a byte-order mark; UTF-16BE and UTF-8 with
+// a BOM are accepted too. Input without a BOM is passed through unchanged.
+func decodeLogEncoding(r io.Reader) (io.Reader, error) {
+	br := bufio.NewReader(r)
+	head, _ := br.Peek(3)
+	switch {
+	case len(head) >= 3 && head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF:
+		_, _ = br.Discard(3)
+		return br, nil
+	case len(head) >= 2 && (head[0] == 0xFF && head[1] == 0xFE || head[0] == 0xFE && head[1] == 0xFF):
+		data, err := io.ReadAll(br)
+		if err != nil {
+			return nil, err
+		}
+		little := data[0] == 0xFF
+		data = data[2:]
+		units := make([]uint16, len(data)/2)
+		for i := range units {
+			lo, hi := data[2*i], data[2*i+1]
+			if !little {
+				lo, hi = hi, lo
+			}
+			units[i] = uint16(lo) | uint16(hi)<<8
+		}
+		return strings.NewReader(string(utf16.Decode(units))), nil
+	default:
+		return br, nil
+	}
 }
 
 func (r *Run) env(name string) *envRec {
@@ -235,6 +332,7 @@ func (r *Run) apply(ev *Event) {
 		e := r.env(ev.Env)
 		e.image = ev.str("image")
 		e.workdir = ev.str("workdir")
+		e.os = ev.str("os")
 	case "env_end":
 		e := r.env(ev.Env)
 		e.sawEnd = true

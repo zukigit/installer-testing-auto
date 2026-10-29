@@ -80,11 +80,14 @@ func (e *Emitter) Error(message string) {
 	e.write("error", "error", "", "", "", "", map[string]any{"message": message})
 }
 
-// EnvStart announces the first started case of an environment.
-func (e *Emitter) EnvStart(name, image, workdir string) {
-	e.write("info", "env_start", name, "", "", "", map[string]any{
-		"image": image, "workdir": workdir,
-	})
+// EnvStart announces the first started case of an environment. os is
+// omitted for linux ("" or "linux"), so Linux logs are unchanged.
+func (e *Emitter) EnvStart(name, image, workdir, os string) {
+	data := map[string]any{"image": image, "workdir": workdir}
+	if os != "" && os != "linux" {
+		data["os"] = os
+	}
+	e.write("info", "env_start", name, "", "", "", data)
 }
 
 // EnvEnd closes an environment: emitted when its last case finished.
@@ -179,7 +182,8 @@ func (c *CaseLogger) Check(kind, name string, pass bool, fields map[string]any) 
 }
 
 // CaseSkipped logs that an installer cannot participate in the upgrade task
-// (reason: no_older_version | nonstandard_version).
+// (reason: no_older_version | nonstandard_version | no_version_format |
+// no_upgrade_from_match | is_upgrade_from).
 func (c *CaseLogger) CaseSkipped(reason string) {
 	c.e.write("info", "case_skipped", c.env, c.task, c.installer, c.fromInstaller, map[string]any{"reason": reason})
 }

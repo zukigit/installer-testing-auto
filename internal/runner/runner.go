@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zukigit/installer-testing-auto/internal/cleanup"
 	"github.com/zukigit/installer-testing-auto/internal/config"
 	"github.com/zukigit/installer-testing-auto/internal/env"
 	"github.com/zukigit/installer-testing-auto/internal/logging"
@@ -40,6 +41,26 @@ type Options struct {
 	Parallel int
 	// Keep keeps failed cases' containers alive for debugging.
 	Keep bool
+	// StartCleanup starts the cleanup watcher and returns the run id and run
+	// directory (container label ita.run=<id>, host files under the run
+	// dir). Called only when the run has os: windows cases — Linux
+	// containers are reaped by testcontainers (Ryuk) and leave no host
+	// files. nil = no watcher (tests, direct use).
+	StartCleanup func() (runID, runDir string, err error)
+
+	// RunID and RunDir are set by Run from StartCleanup.
+	RunID  string
+	RunDir string
+}
+
+// hasWindowsCases reports whether any case runs in an os: windows environment.
+func hasWindowsCases(cases []caseDef) bool {
+	for _, c := range cases {
+		if c.bundle.Config.Environment.IsWindows() {
+			return true
+		}
+	}
+	return false
 }
 
 // List resolves and prints every config without touching any environment.
@@ -47,6 +68,13 @@ func List(configPattern string, vars map[string]string) error {
 	paths, err := config.Discover(configPattern)
 	if err != nil {
 		return err
+	}
+	if configPattern == "" {
+		var windows []string
+		paths, windows = config.FilterDefault(paths)
+		for _, w := range windows {
+			report.ListSkippedWindows(w)
+		}
 	}
 	for _, path := range paths {
 		b, err := config.LoadBundle(path, vars)
@@ -70,7 +98,7 @@ type caseDef struct {
 type skipDef struct {
 	bundle *config.Bundle
 	ri     *config.ResolvedInstaller
-	reason string // no_older_version | nonstandard_version
+	reason string // no_older_version | nonstandard_version | no_version_format | no_upgrade_from_match | is_upgrade_from
 }
 
 // Run executes every selected (installer, task) case from every discovered
@@ -87,11 +115,32 @@ func Run(ctx context.Context, opts Options) int {
 		log.Error(err.Error())
 		return 2
 	}
+	// Default set (no --config): os: windows configs run only when named
+	// explicitly (docs/windows-defaults-cleanup-watcher-plan.md §1).
+	var windowsLeftOut []string
+	if opts.ConfigPattern == "" {
+		paths, windowsLeftOut = config.FilterDefault(paths)
+	}
 
 	cases, envs, skips, configErrors := buildQueue(paths, opts, log)
 	if len(cases) == 0 {
-		log.Error("no cases to run (check --task/--installer filters and the package list in bin/)")
+		msg := "no cases to run (check --task/--installer filters and the package list in bin/)"
+		if len(windowsLeftOut) > 0 {
+			msg += " (os: windows configs run only with an explicit --config)"
+		}
+		log.Error(msg)
 		return 1
+	}
+
+	// The watcher starts before any container; no watcher -> no run
+	// (docs/windows-defaults-cleanup-watcher-plan.md §3).
+	if opts.StartCleanup != nil && hasWindowsCases(cases) {
+		id, dir, err := opts.StartCleanup()
+		if err != nil {
+			log.Error(err.Error())
+			return 2
+		}
+		opts.RunID, opts.RunDir = id, dir
 	}
 
 	log.RunStart(len(paths), len(cases), opts.Parallel, opts.Vars)
@@ -212,11 +261,31 @@ func buildUpgradeCases(b *config.Bundle, ri *config.ResolvedInstaller, pool []*c
 	if !upgradeSelected {
 		return
 	}
+	if ri.UpgradeFromSet {
+		// explicit pairing (docs/upgrade-from-plan.md): no version rules
+		if !inScope {
+			return
+		}
+		if len(ri.UpgradeFrom) == 0 {
+			*skips = append(*skips, skipDef{bundle: b, ri: ri, reason: "no_upgrade_from_match"})
+			return
+		}
+		froms := ri.UpgradeFromPairs(b.Config.Environment.IsWindows())
+		if len(froms) == 0 {
+			*skips = append(*skips, skipDef{bundle: b, ri: ri, reason: "is_upgrade_from"})
+			return
+		}
+		for _, f := range froms {
+			*cases = append(*cases, caseDef{bundle: b, ri: ri, t: task.Upgrade{}, from: f})
+			info.total++
+		}
+		return
+	}
 	var older []*config.ResolvedInstaller
 	if _, ok := config.ParseVersion(ri.Version); ok {
 		aMtime := fileMtime(ri.LocalPath)
 		for _, o := range pool {
-			if o == ri || o.LocalPath == ri.LocalPath || o.PackageName != ri.PackageName {
+			if o == ri || o.LocalPath == ri.LocalPath || o.UpgradeIdentity() != ri.UpgradeIdentity() {
 				continue
 			}
 			if _, ok := config.ParseVersion(o.Version); !ok {
@@ -232,7 +301,9 @@ func buildUpgradeCases(b *config.Bundle, ri *config.ResolvedInstaller, pool []*c
 	}
 	if len(older) == 0 {
 		// skip event only for installers that are otherwise part of the run
-		if _, ok := config.ParseVersion(ri.Version); !ok {
+		if ri.NoVersionFormat {
+			*skips = append(*skips, skipDef{bundle: b, ri: ri, reason: "no_version_format"})
+		} else if _, ok := config.ParseVersion(ri.Version); !ok {
 			*skips = append(*skips, skipDef{bundle: b, ri: ri, reason: "nonstandard_version"})
 		} else {
 			*skips = append(*skips, skipDef{bundle: b, ri: ri, reason: "no_older_version"})
@@ -274,6 +345,10 @@ func runCase(ctx context.Context, log *logging.Emitter, tr *envTracker, names *n
 		Image:         spec.Image,
 		Workdir:       spec.Workdir,
 		ContainerName: names.assign(containerRawName(envName, c)),
+		OS:            spec.OS,
+		Isolation:     spec.Isolation,
+		RunID:         opts.RunID,
+		RunDir:        opts.RunDir,
 	}
 	e, err := env.New(spec.Type, envOpts)
 	if err == nil {
@@ -293,6 +368,16 @@ func runCase(ctx context.Context, log *logging.Emitter, tr *envTracker, names *n
 		passed, failed = res.Passed, res.Failed
 		if opts.Keep && failed > 0 {
 			kept = true // container stays up for debugging
+			if opts.RunDir != "" {
+				// before case_end: the watcher must never remove a kept container
+				entry := cleanup.KeptEntry{ID: containerID, Name: envOpts.ContainerName}
+				if hp, ok := e.(interface{ HostPaths() []string }); ok {
+					entry.Paths = hp.HostPaths()
+				}
+				if kerr := cleanup.RecordKept(opts.RunDir, entry); kerr != nil {
+					cl.Error(fmt.Sprintf("record kept container: %v", kerr))
+				}
+			}
 		} else if serr := e.Stop(context.WithoutCancel(ctx)); serr != nil {
 			cl.Error(fmt.Sprintf("teardown: %v", serr))
 		}
@@ -318,7 +403,11 @@ func containerRawName(envName string, c caseDef) string {
 	taskPart := c.t.Name()
 	if c.from != nil {
 		base = strings.TrimSuffix(base, filepath.Ext(base))
-		taskPart = "from-" + c.from.Version + "-" + c.t.Name()
+		fromPart := c.from.Version
+		if fromPart == "" { // upgrade_from without a parsable version
+			fromPart = strings.TrimSuffix(c.from.Basename, filepath.Ext(c.from.Basename))
+		}
+		taskPart = "from-" + fromPart + "-" + c.t.Name()
 	}
 	return strings.ToLower("ita-" + envName + "-" + base + "-" + taskPart)
 }
@@ -367,9 +456,9 @@ func (t *envTracker) caseStarted(name string) {
 		i.startedEmitted = true
 		workdir := i.spec.Workdir
 		if workdir == "" {
-			workdir = config.DefaultWorkdir
+			workdir = config.DefaultWorkdirFor(i.spec.OS)
 		}
-		t.log.EnvStart(name, i.spec.Image, workdir)
+		t.log.EnvStart(name, i.spec.Image, workdir, i.spec.OS)
 	}
 }
 

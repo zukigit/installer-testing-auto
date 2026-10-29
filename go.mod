@@ -3,7 +3,9 @@ module github.com/zukigit/installer-testing-auto
 go 1.26.7
 
 require (
+	github.com/containerd/errdefs v1.0.0
 	github.com/moby/moby/api v1.55.0
+	github.com/moby/moby/client v0.5.0
 	github.com/testcontainers/testcontainers-go v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -14,7 +16,6 @@ require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/platforms v0.2.1 // indirect
@@ -34,7 +35,6 @@ require (
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.2.0 // indirect
-	github.com/moby/moby/client v0.5.0 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
 	github.com/moby/sys/user v0.4.0 // indirect

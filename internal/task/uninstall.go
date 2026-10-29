@@ -33,7 +33,7 @@ func (t Uninstall) Run(ctx context.Context, e env.Environment, in Input, cl *log
 		return Result{Failed: 1}
 	}
 	setupCmd := ri.Expand(ri.InstallCmd)
-	stdout, stderr, code, err := e.Exec(ctx, []string{"/bin/sh", "-c", setupCmd})
+	stdout, stderr, code, err := e.Exec(ctx, e.Shell().Command(setupCmd))
 	cl.Step("setup-install", setupCmd, code, err == nil && code == 0, stdout, stderr)
 	if err != nil || code != 0 {
 		return Result{Failed: 1} // cannot uninstall what is not installed

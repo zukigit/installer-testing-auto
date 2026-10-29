@@ -44,7 +44,7 @@ func (t FreshInstall) Run(ctx context.Context, e env.Environment, in Input, cl *
 // result; a failed command aborts the case immediately.
 func runPhase(ctx context.Context, e env.Environment, cl *logging.CaseLogger, ri *config.ResolvedInstaller, tmpl, kind string, cs *config.Checks) (int, int) {
 	cmd := ri.Expand(tmpl)
-	stdout, stderr, code, err := e.Exec(ctx, []string{"/bin/sh", "-c", cmd})
+	stdout, stderr, code, err := e.Exec(ctx, e.Shell().Command(cmd))
 	pass := err == nil && code == 0
 	cl.Step(kind, cmd, code, pass, stdout, stderr)
 	if !pass {

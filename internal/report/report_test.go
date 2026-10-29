@@ -1,10 +1,12 @@
 package report
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/zukigit/installer-testing-auto/internal/config"
 )
@@ -343,4 +345,117 @@ func captureStdout(t *testing.T, fn func()) string {
 		t.Fatal(err)
 	}
 	return string(out)
+}
+
+func TestWindowsReportAndList(t *testing.T) {
+	const logs = `
+{"ts":"2026-10-28T12:00:00.000Z","level":"info","event":"run_start","data":{"configs":1,"cases":1,"parallel":5}}
+{"ts":"2026-10-28T12:00:00.010Z","level":"info","event":"env_start","env":"windows-2022","data":{"image":"servercore:ltsc2022","workdir":"C:\\ita","os":"windows"}}
+{"ts":"2026-10-28T12:00:00.020Z","level":"info","event":"case_skipped","env":"windows-2022","task":"upgrade","installer":"a.msi","data":{"reason":"no_version_format"}}
+{"ts":"2026-10-28T12:00:00.500Z","level":"info","event":"env_end","env":"windows-2022","data":{"passed":0,"failed":0}}
+{"ts":"2026-10-28T12:00:00.500Z","level":"info","event":"run_end","data":{"passed":0,"failed":0}}
+`
+	run, err := Parse(strings.NewReader(logs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	run.RenderText(&b, false)
+	out := b.String()
+	for _, want := range []string{
+		`env windows-2022 (windows, image servercore:ltsc2022, workdir C:\ita)`,
+		"no version_format configured",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report missing %q\n%s", want, out)
+		}
+	}
+
+	bundle := &config.Bundle{
+		Path:   "configs/win.yaml",
+		Config: &config.Config{Environment: config.EnvironmentSpec{Name: "win", Type: "docker", OS: "windows", Isolation: "process", Image: "x", Workdir: `C:\ita`}},
+		Installers: []*config.ResolvedInstaller{
+			{LocalPath: "bin/a.msi", ContainerPath: `C:\ita\a.msi`, Basename: "a.msi", NoVersionFormat: true, InstallCmd: "line1\nline2"},
+			{LocalPath: "bin/b-1.2.3.msi", ContainerPath: `C:\ita\b-1.2.3.msi`, Basename: "b-1.2.3.msi", Version: "1.2.3", UpgradeKey: "b"},
+			{LocalPath: "bin/c.msi", ContainerPath: `C:\ita\c.msi`, Basename: "c.msi"},
+		},
+	}
+	out = captureStdout(t, func() { ListBundle(bundle) })
+	for _, want := range []string{
+		"  os:       windows\n",
+		"  isolation: process\n",
+		"    in-container: C:\\ita\\a.msi\n",
+		"    install:      line1\n                  line2\n",
+		"    pairing:      skipped by upgrade (no_version_format)\n",
+		"    pairing:      version=1.2.3 package=b\n",
+		"    pairing:      skipped by upgrade (nonstandard_version)\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestUpgradeFromListAndSkipText(t *testing.T) {
+	from := &config.ResolvedInstaller{LocalPath: "bin/old/a.msi", Basename: "a.msi"}
+	other := &config.ResolvedInstaller{LocalPath: "bin/b.msi", Basename: "B.MSI"}
+	bundle := &config.Bundle{
+		Path:   "configs/w.yaml",
+		Config: &config.Config{Environment: config.EnvironmentSpec{Name: "w", OS: "windows", Image: "x", Workdir: `C:\ita`}},
+		Installers: []*config.ResolvedInstaller{
+			{LocalPath: "bin/new.msi", Basename: "new.msi", UpgradeFromSet: true, UpgradeFrom: []*config.ResolvedInstaller{from, other}},
+			{LocalPath: "bin/b.msi", Basename: "b.msi", UpgradeFromSet: true, UpgradeFrom: []*config.ResolvedInstaller{other}},
+			{LocalPath: "bin/c.msi", Basename: "c.msi", UpgradeFromSet: true},
+		},
+	}
+	out := captureStdout(t, func() { ListBundle(bundle) })
+	for _, want := range []string{
+		"    pairing:      upgrade from bin/old/a.msi\n    pairing:      upgrade from bin/b.msi\n",
+		"    pairing:      skipped by upgrade (is_upgrade_from)\n", // b.msi vs B.MSI on windows
+		"    pairing:      skipped by upgrade (no_upgrade_from_match)\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list missing %q\n%s", want, out)
+		}
+	}
+	if skipReasonText("no_upgrade_from_match") != "upgrade_from matched no files" ||
+		skipReasonText("is_upgrade_from") != "this file is the upgrade_from installer" {
+		t.Error("skip texts")
+	}
+}
+
+// Windows PowerShell 5.1 `> run.jsonl` writes UTF-16LE with a BOM and CRLF.
+func TestParseUTF16AndBOM(t *testing.T) {
+	text := strings.ReplaceAll(strings.TrimSpace(sampleNDJSON), "\n", "\r\n\r\n") + "\r\n"
+	enc := func(bigEndian bool) []byte {
+		units := utf16.Encode([]rune(text))
+		out := []byte{0xFF, 0xFE}
+		if bigEndian {
+			out = []byte{0xFE, 0xFF}
+		}
+		for _, u := range units {
+			if bigEndian {
+				out = append(out, byte(u>>8), byte(u))
+			} else {
+				out = append(out, byte(u), byte(u>>8))
+			}
+		}
+		return out
+	}
+	inputs := map[string][]byte{
+		"utf16le": enc(false),
+		"utf16be": enc(true),
+		"utf8bom": append([]byte{0xEF, 0xBB, 0xBF}, text...),
+		"utf8":    []byte(text),
+	}
+	for name, in := range inputs {
+		run, err := Parse(bytes.NewReader(in))
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if !run.sawRunStart || !run.sawRunEnd || len(run.allCases) != 3 {
+			t.Errorf("%s: parsed run_start=%v run_end=%v cases=%d", name, run.sawRunStart, run.sawRunEnd, len(run.allCases))
+		}
+	}
 }
